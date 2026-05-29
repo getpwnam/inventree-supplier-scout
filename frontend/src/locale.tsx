@@ -10,7 +10,7 @@ async function tryLoadLocale(locale: string): Promise<any> {
   try {
     const messages = await import(`./locales/${locale}/messages.ts`);
     return messages;
-  } catch (error) {
+  } catch (_error) {
     console.warn(`Failed to load locale ${locale}`);
     return null;
   }

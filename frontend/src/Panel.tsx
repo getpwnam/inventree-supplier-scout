@@ -17,11 +17,12 @@ import {
   Text,
   Textarea,
   TextInput,
-  Title
+  Title,
+  Tooltip
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { LocalizedComponent } from './locale';
 
 type Supplier = {
@@ -45,11 +46,39 @@ type MatcherContext = {
   title?: string;
   search_url: string;
   apply_url: string;
+  run_resync_url?: string;
+  rate_status_url?: string;
   default_query?: string;
   part_pk: number;
   suppliers: Supplier[];
   top_n?: number;
   show_score?: boolean;
+};
+
+type SupplierRateStatus = {
+  supplier_pk: number;
+  supplier_key?: string;
+  supplier_name?: string;
+  configured?: boolean;
+  rate_limit_per_second?: number;
+  daily_limit?: number;
+  daily_count?: number;
+  daily_remaining?: number | null;
+  daily_percent_used?: number;
+  daily_reset_at?: string;
+};
+
+type ResyncResult = {
+  scope?: 'supplier' | 'part';
+  action?: 'resync' | 'reset_cursor';
+  processed?: number;
+  updated?: number;
+  created?: number;
+  skipped?: number;
+  failed?: number;
+  round_robin?: boolean;
+  cursor_before?: number;
+  cursor_after?: number;
 };
 
 function formatUnitPrice(value: unknown): string {
@@ -82,8 +111,12 @@ function SupplierScoutMatcher({
   const [isError, setIsError] = useState<boolean>(false);
   const [searching, setSearching] = useState<boolean>(false);
   const [applying, setApplying] = useState<boolean>(false);
+  const [runningResync, setRunningResync] = useState<boolean>(false);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
+  const [rateStatus, setRateStatus] = useState<SupplierRateStatus | null>(null);
+  const [loadingRateStatus, setLoadingRateStatus] = useState<boolean>(false);
+  const [resyncResult, setResyncResult] = useState<ResyncResult | null>(null);
 
   const supplierOptions = useMemo(
     () => suppliers.map((s) => ({ label: s.name, value: String(s.pk) })),
@@ -95,6 +128,167 @@ function SupplierScoutMatcher({
       selectedSkus.has(String(candidate.supplier_part_number || ''))
     );
   }, [candidates, selectedSkus]);
+
+  async function fetchRateStatus(supplierPk?: string) {
+    if (!serverContext.rate_status_url) {
+      return;
+    }
+
+    const supplierValue = Number(supplierPk || supplier);
+    if (!Number.isFinite(supplierValue) || supplierValue <= 0) {
+      return;
+    }
+
+    setLoadingRateStatus(true);
+
+    try {
+      const response = await context.api.get(
+        `${serverContext.rate_status_url}?supplier=${supplierValue}`
+      );
+      const data = response?.data || {};
+      const status = (data.suppliers || [])[0] || null;
+      setRateStatus(status);
+    } catch (error: any) {
+      setRateStatus(null);
+      setIsError(true);
+      setStatusMessage(
+        error?.response?.data?.message ||
+          error?.message ||
+          'Failed to load API usage status'
+      );
+    } finally {
+      setLoadingRateStatus(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchRateStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supplier, serverContext.rate_status_url]);
+
+  function renderRateBadge() {
+    if (!rateStatus) {
+      return (
+        <Badge variant='light' color='gray'>
+          API status unavailable
+        </Badge>
+      );
+    }
+
+    const dailyLimit = Number(rateStatus.daily_limit || 0);
+    const dailyCount = Number(rateStatus.daily_count || 0);
+    const dailyRemaining =
+      rateStatus.daily_remaining == null
+        ? null
+        : Number(rateStatus.daily_remaining);
+
+    let badgeColor: 'green' | 'yellow' | 'red' | 'blue' = 'blue';
+
+    if (dailyLimit > 0) {
+      const ratio = dailyCount / Math.max(1, dailyLimit);
+      if (dailyRemaining === 0) {
+        badgeColor = 'red';
+      } else if (ratio >= 0.9) {
+        badgeColor = 'yellow';
+      } else {
+        badgeColor = 'green';
+      }
+    }
+
+    const dailyText =
+      dailyLimit > 0
+        ? `${dailyCount}/${dailyLimit} day (${dailyRemaining} left)`
+        : `${dailyCount} day (unlimited)`;
+
+    return (
+      <Group gap='xs' align='center'>
+        <Badge variant='light' color={badgeColor}>
+          {dailyText}
+        </Badge>
+        <Badge variant='dot' color='blue'>
+          {`${rateStatus.rate_limit_per_second || 0}/sec`}
+        </Badge>
+        {rateStatus.daily_reset_at && (
+          <Text size='xs' c='dimmed'>
+            Resets:{' '}
+            {rateStatus.daily_reset_at.replace('T', ' ').replace('Z', ' UTC')}
+          </Text>
+        )}
+        <Tooltip
+          multiline
+          w={260}
+          label='Badge legend: green < 90% daily usage, yellow >= 90%, red = daily limit reached. Blue dot shows calls/sec limit.'
+        >
+          <Badge variant='outline' color='gray'>
+            Legend
+          </Badge>
+        </Tooltip>
+      </Group>
+    );
+  }
+
+  async function runResync(scope: 'supplier' | 'part' | 'reset_cursor') {
+    if (!serverContext.run_resync_url) {
+      setIsError(true);
+      setStatusMessage('Missing resync URL in plugin context');
+      return;
+    }
+
+    setRunningResync(true);
+
+    try {
+      const payload: Record<string, number | string> = {
+        supplier: Number(supplier)
+      };
+
+      if (scope === 'part') {
+        payload.part_pk = Number(serverContext.part_pk);
+      } else if (scope === 'reset_cursor') {
+        payload.action = 'reset_cursor';
+      }
+
+      const response = await context.api.post(
+        serverContext.run_resync_url,
+        payload
+      );
+      const data = response?.data || {};
+
+      if (data.message !== 'OK') {
+        setIsError(true);
+        setStatusMessage(data.message || 'Manual resync failed');
+        return;
+      }
+
+      let summary = '';
+      if (scope === 'reset_cursor') {
+        summary = `Resync cursor reset: ${data.cursor_before ?? 0} -> ${data.cursor_after ?? 0}`;
+      } else {
+        summary = `Resync (${scope}) processed=${data.processed || 0}, updated=${data.updated || 0}, created=${data.created || 0}, skipped=${data.skipped || 0}, failed=${data.failed || 0}`;
+      }
+
+      setResyncResult(data as ResyncResult);
+
+      setIsError((data.failed || 0) > 0);
+      setStatusMessage(summary);
+
+      notifications.show({
+        title: 'Supplier Scout',
+        message: summary,
+        color: (data.failed || 0) > 0 ? 'yellow' : 'green'
+      });
+
+      await fetchRateStatus();
+    } catch (error: any) {
+      setIsError(true);
+      setStatusMessage(
+        error?.response?.data?.message ||
+          error?.message ||
+          'Manual resync failed'
+      );
+    } finally {
+      setRunningResync(false);
+    }
+  }
 
   async function searchMatches() {
     if (!serverContext.search_url) {
@@ -238,6 +432,65 @@ function SupplierScoutMatcher({
         </Button>
       </Group>
 
+      <Group justify='space-between' align='center'>
+        {renderRateBadge()}
+        <Group gap='xs'>
+          <Button
+            variant='subtle'
+            size='xs'
+            onClick={() => fetchRateStatus()}
+            loading={loadingRateStatus}
+          >
+            Refresh API Usage
+          </Button>
+          <Button
+            variant='light'
+            size='xs'
+            onClick={() => runResync('part')}
+            loading={runningResync}
+          >
+            Resync This Part
+          </Button>
+          <Button
+            variant='light'
+            size='xs'
+            onClick={() => runResync('supplier')}
+            loading={runningResync}
+          >
+            Resync Supplier Batch
+          </Button>
+          <Tooltip label='Admin only: reset supplier round-robin cursor to first supplier part'>
+            <Button
+              variant='outline'
+              color='orange'
+              size='xs'
+              onClick={() => runResync('reset_cursor')}
+              loading={runningResync}
+            >
+              Reset Supplier Cursor
+            </Button>
+          </Tooltip>
+        </Group>
+      </Group>
+
+      {resyncResult && (
+        <Paper withBorder p='xs' radius='md'>
+          <Group justify='space-between'>
+            <Text size='sm' fw={600}>
+              Latest Resync
+            </Text>
+            <Text size='xs' c='dimmed'>
+              Scope: {resyncResult.scope || '-'}
+            </Text>
+          </Group>
+          <Text size='sm'>
+            {resyncResult.action === 'reset_cursor'
+              ? `Cursor reset ${resyncResult.cursor_before ?? 0} -> ${resyncResult.cursor_after ?? 0}`
+              : `Cursor ${resyncResult.cursor_before ?? 0} -> ${resyncResult.cursor_after ?? 0} (${resyncResult.round_robin ? 'round-robin' : 'manual'})`}
+          </Text>
+        </Paper>
+      )}
+
       {showTokens && (
         <Paper withBorder p='md' radius='md' mb='md'>
           <Stack gap='xs'>
@@ -349,7 +602,7 @@ function SupplierScoutMatcher({
                             {candidate.supplier_part_number || ''}
                           </Anchor>
                         ) : (
-                          <>{candidate.supplier_part_number || ''}</>
+                          candidate.supplier_part_number || ''
                         )}
                       </Table.Td>
                       <Table.Td>{candidate.description || ''}</Table.Td>

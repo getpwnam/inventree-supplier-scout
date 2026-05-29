@@ -21,6 +21,7 @@ except Exception:  # pragma: no cover - fallback for isolated unit tests
 
 
 from .adapters import BaseSupplierAdapter
+from .adapters import SupplierAPIRateLimitError
 from .adapters import SupplierAPIClient
 
 
@@ -90,6 +91,8 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
     user_settings = MOUSER_USER_SETTINGS
     company_setting = "MOUSER_PK"
     max_candidates_setting = "MOUSER_MAX_CANDIDATES"
+    api_rate_limit_per_second_default = 1
+    api_daily_limit_default = 1000
 
     COUNTRY_CODES = {
         "AUD": "AU",
@@ -187,6 +190,7 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
             pass
 
     def _post(self, url, payload):
+        self.enforce_api_rate_limits(cost=1)
         return self.transport.api_call(
             url,
             method="POST",
@@ -337,6 +341,11 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
             # Cache miss or disabled, fetch from API
             try:
                 response = self._post(url, payload)
+            except SupplierAPIRateLimitError as exc:
+                return {
+                    "error_status": str(exc),
+                    "parts": [],
+                }
             except Exception:
                 return {
                     "error_status": _("Connection to Mouser API failed"),

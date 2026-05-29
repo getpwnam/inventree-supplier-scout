@@ -10,6 +10,7 @@ import sys
 import tempfile
 import types
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -49,6 +50,7 @@ def _install_inventree_stubs():
 _install_inventree_stubs()
 
 from supplier_scout.mouser import MouserSupplierAdapter  # noqa: E402
+from supplier_scout.adapters import SupplierAPIRateLimitError  # noqa: E402
 
 
 class DummyPlugin:
@@ -63,6 +65,9 @@ class DummyPlugin:
     def get_effective_setting(self, key, user=None, backup_value=None):
         del user
         return self.get_setting(key, backup_value=backup_value)
+
+    def set_setting(self, key, value):
+        self.settings[key] = value
 
 
 class MockResponse:
@@ -99,6 +104,35 @@ class TestMouserSupplierAdapter(unittest.TestCase):
 
         with patch("supplier_scout.mouser.get_language", return_value="de-DE"):
             self.assertEqual(self.adapter.get_mouser_package(part_data), "Reel, Gurt")
+
+    def test_mouser_api_rate_defaults(self):
+        self.assertEqual(self.adapter.get_api_rate_limit_per_second(), 1)
+        self.assertEqual(self.adapter.get_api_daily_limit(), 1000)
+
+    def test_daily_api_limit_blocks_when_exceeded(self):
+        self.adapter.plugin.settings["MOUSER_API_RATE_LIMIT_PER_SECOND"] = 0
+        self.adapter.plugin.settings["MOUSER_API_DAILY_LIMIT"] = 2
+
+        self.adapter.enforce_api_rate_limits(cost=1)
+        self.adapter.enforce_api_rate_limits(cost=1)
+
+        with self.assertRaises(SupplierAPIRateLimitError):
+            self.adapter.enforce_api_rate_limits(cost=1)
+
+    def test_post_raises_when_daily_limit_reached(self):
+        self.adapter.plugin.settings["MOUSER_API_RATE_LIMIT_PER_SECOND"] = 0
+        self.adapter.plugin.settings["MOUSER_API_DAILY_LIMIT"] = 1
+        self.adapter.plugin.settings["MOUSER_API_DAILY_COUNT"] = 1
+        self.adapter.plugin.settings["MOUSER_API_DAILY_DATE"] = (
+            datetime.utcnow().date().isoformat()
+        )
+
+        self.adapter.transport.api_call = MagicMock(return_value=MockResponse({}))
+
+        with self.assertRaises(SupplierAPIRateLimitError):
+            self.adapter._post("https://example.invalid", {"q": "x"})
+
+        self.adapter.transport.api_call.assert_not_called()
 
     def test_reformat_mouser_price_supports_common_formats(self):
         self.assertEqual(self.adapter.reformat_mouser_price("1.456,34 €"), 1456.34)

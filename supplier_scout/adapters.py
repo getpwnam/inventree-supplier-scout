@@ -1,4 +1,15 @@
 from plugin.mixins import APICallMixin
+import re
+import time
+from datetime import datetime
+from datetime import timedelta
+
+try:
+    from django.utils.translation import gettext_lazy as _  # type: ignore[import-not-found]
+except Exception:  # pragma: no cover - fallback for isolated unit tests
+
+    def _(value):
+        return value
 
 
 class SupplierAPIClient(APICallMixin):
@@ -33,6 +44,8 @@ class BaseSupplierAdapter:
     user_settings = {}
     company_setting = ""
     max_candidates_setting = ""
+    api_rate_limit_per_second_default = 0
+    api_daily_limit_default = 0
 
     def __init__(self, plugin):
         self.plugin = plugin
@@ -40,10 +53,223 @@ class BaseSupplierAdapter:
     def get_setting(self, key, backup_value=None):
         return self.plugin.get_setting(key, backup_value=backup_value)
 
+    @classmethod
+    def get_resync_enabled_setting_key(cls):
+        return f"{str(cls.key or '').upper()}_RESYNC_ENABLED"
+
+    @classmethod
+    def get_resync_interval_setting_key(cls):
+        return f"{str(cls.key or '').upper()}_RESYNC_INTERVAL_MINUTES"
+
+    @classmethod
+    def get_resync_batch_size_setting_key(cls):
+        return f"{str(cls.key or '').upper()}_RESYNC_BATCH_SIZE"
+
+    @classmethod
+    def get_api_rate_limit_setting_key(cls):
+        return f"{str(cls.key or '').upper()}_API_RATE_LIMIT_PER_SECOND"
+
+    @classmethod
+    def get_api_daily_limit_setting_key(cls):
+        return f"{str(cls.key or '').upper()}_API_DAILY_LIMIT"
+
     def get_effective_setting(self, key, user=None, backup_value=None):
         return self.plugin.get_effective_setting(
             key, user=user, backup_value=backup_value
         )
+
+    def get_resync_enabled(self):
+        value = self.get_setting(
+            self.get_resync_enabled_setting_key(),
+            backup_value=False,
+        )
+        if isinstance(value, bool):
+            return value
+        text = str(value or "").strip().lower()
+        return text in ["1", "true", "yes", "on", "y"]
+
+    def get_resync_interval_minutes(self, default=1440):
+        try:
+            interval = int(
+                self.get_setting(
+                    self.get_resync_interval_setting_key(), backup_value=default
+                )
+                or default
+            )
+        except Exception:
+            interval = default
+
+        return max(1, interval)
+
+    def get_resync_batch_size(self, default=100):
+        try:
+            batch_size = int(
+                self.get_setting(
+                    self.get_resync_batch_size_setting_key(), backup_value=default
+                )
+                or default
+            )
+        except Exception:
+            batch_size = default
+
+        return max(1, batch_size)
+
+    def get_api_rate_limit_per_second(self):
+        default = int(getattr(self, "api_rate_limit_per_second_default", 0) or 0)
+        try:
+            value = int(
+                self.get_setting(
+                    self.get_api_rate_limit_setting_key(),
+                    backup_value=default,
+                )
+                or default
+            )
+        except Exception:
+            value = default
+        return max(0, value)
+
+    def get_api_daily_limit(self):
+        default = int(getattr(self, "api_daily_limit_default", 0) or 0)
+        try:
+            value = int(
+                self.get_setting(
+                    self.get_api_daily_limit_setting_key(),
+                    backup_value=default,
+                )
+                or default
+            )
+        except Exception:
+            value = default
+        return max(0, value)
+
+    def _runtime_setting_key(self, suffix):
+        key_prefix = re.sub(r"[^A-Za-z0-9]+", "_", str(self.key or "").upper()).strip(
+            "_"
+        )
+        return f"{key_prefix}_{suffix}"
+
+    def _set_runtime_setting(self, key, value):
+        setter = getattr(self.plugin, "set_setting", None)
+        if callable(setter):
+            try:
+                setter(key, value)
+                return
+            except Exception:
+                pass
+
+        store = getattr(self.plugin, "settings", None)
+        if isinstance(store, dict):
+            store[key] = value
+
+    def enforce_api_rate_limits(self, cost=1):
+        cost = max(1, int(cost or 1))
+
+        rate_limit = self.get_api_rate_limit_per_second()
+        now_ts = time.time()
+
+        if rate_limit > 0:
+            window_start_key = self._runtime_setting_key("API_SECOND_WINDOW_START")
+            window_count_key = self._runtime_setting_key("API_SECOND_WINDOW_COUNT")
+
+            try:
+                window_start = float(self.get_setting(window_start_key, backup_value=0) or 0)
+            except Exception:
+                window_start = 0.0
+
+            try:
+                window_count = int(self.get_setting(window_count_key, backup_value=0) or 0)
+            except Exception:
+                window_count = 0
+
+            elapsed = now_ts - window_start
+            if window_start <= 0 or elapsed >= 1.0:
+                window_start = now_ts
+                window_count = 0
+
+            if window_count + cost > rate_limit:
+                sleep_for = max(0.0, 1.0 - elapsed)
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
+                now_ts = time.time()
+                window_start = now_ts
+                window_count = 0
+
+            window_count += cost
+            self._set_runtime_setting(window_start_key, f"{window_start:.6f}")
+            self._set_runtime_setting(window_count_key, window_count)
+
+        daily_limit = self.get_api_daily_limit()
+        if daily_limit > 0:
+            daily_date_key = self._runtime_setting_key("API_DAILY_DATE")
+            daily_count_key = self._runtime_setting_key("API_DAILY_COUNT")
+
+            today = datetime.utcnow().date().isoformat()
+            saved_date = str(self.get_setting(daily_date_key, backup_value=today) or "")
+
+            try:
+                daily_count = int(self.get_setting(daily_count_key, backup_value=0) or 0)
+            except Exception:
+                daily_count = 0
+
+            if saved_date != today:
+                saved_date = today
+                daily_count = 0
+
+            if daily_count + cost > daily_limit:
+                raise SupplierAPIRateLimitError(
+                    _("%(supplier)s daily API limit reached (%(limit)s requests/day)")
+                    % {
+                        "supplier": str(self.name or self.key or "Supplier"),
+                        "limit": daily_limit,
+                    }
+                )
+
+            daily_count += cost
+            self._set_runtime_setting(daily_date_key, saved_date)
+            self._set_runtime_setting(daily_count_key, daily_count)
+
+    def get_api_usage_status(self):
+        rate_limit = self.get_api_rate_limit_per_second()
+        daily_limit = self.get_api_daily_limit()
+
+        daily_date_key = self._runtime_setting_key("API_DAILY_DATE")
+        daily_count_key = self._runtime_setting_key("API_DAILY_COUNT")
+
+        today = datetime.utcnow().date().isoformat()
+        saved_date = str(self.get_setting(daily_date_key, backup_value=today) or "")
+
+        try:
+            daily_count = int(self.get_setting(daily_count_key, backup_value=0) or 0)
+        except Exception:
+            daily_count = 0
+
+        if saved_date != today:
+            daily_count = 0
+            saved_date = today
+
+        if daily_limit > 0:
+            remaining_daily = max(0, daily_limit - daily_count)
+            percent_used = min(100.0, (daily_count / daily_limit) * 100.0)
+        else:
+            remaining_daily = None
+            percent_used = 0.0
+
+        try:
+            parsed_date = datetime.strptime(saved_date, "%Y-%m-%d")
+            reset_at = (parsed_date + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+        except Exception:
+            reset_at = ""
+
+        return {
+            "supplier_key": self.key,
+            "supplier_name": self.name,
+            "rate_limit_per_second": rate_limit,
+            "daily_limit": daily_limit,
+            "daily_count": daily_count,
+            "daily_remaining": remaining_daily,
+            "daily_percent_used": round(percent_used, 2),
+            "daily_reset_at": reset_at,
+        }
 
     def get_registered_supplier(self):
         try:
@@ -160,10 +386,83 @@ class BaseSupplierAdapter:
         }
 
 
+class SupplierAPIRateLimitError(RuntimeError):
+    """Raised when a supplier API daily usage limit is exceeded."""
+
+
 def build_supplier_settings(adapter_classes):
     settings = {}
     for adapter_class in adapter_classes:
         settings.update(getattr(adapter_class, "settings", {}) or {})
+    return settings
+
+
+def build_supplier_schedule_settings(adapter_classes):
+    settings = {}
+
+    for adapter_class in adapter_classes:
+        supplier_name = str(getattr(adapter_class, "name", "Supplier") or "Supplier")
+        enabled_key = adapter_class.get_resync_enabled_setting_key()
+        interval_key = adapter_class.get_resync_interval_setting_key()
+        batch_size_key = adapter_class.get_resync_batch_size_setting_key()
+        api_rate_limit_key = adapter_class.get_api_rate_limit_setting_key()
+        api_daily_limit_key = adapter_class.get_api_daily_limit_setting_key()
+        default_rate = int(
+            getattr(adapter_class, "api_rate_limit_per_second_default", 0) or 0
+        )
+        default_daily = int(getattr(adapter_class, "api_daily_limit_default", 0) or 0)
+
+        settings[enabled_key] = {
+            "name": _("Enable %(supplier)s scheduled resync")
+            % {"supplier": supplier_name},
+            "description": _(
+                "Enable periodic refresh of supplier part metadata and price breaks for %(supplier)s"
+            )
+            % {"supplier": supplier_name},
+            "validator": bool,
+            "default": False,
+        }
+        settings[interval_key] = {
+            "name": _("%(supplier)s resync interval (minutes)")
+            % {"supplier": supplier_name},
+            "description": _(
+                "How often to refresh %(supplier)s supplier parts (in minutes)"
+            )
+            % {"supplier": supplier_name},
+            "validator": int,
+            "default": 1440,
+        }
+        settings[batch_size_key] = {
+            "name": _("%(supplier)s resync batch size")
+            % {"supplier": supplier_name},
+            "description": _(
+                "Maximum number of existing %(supplier)s supplier parts to process per scheduled run"
+            )
+            % {"supplier": supplier_name},
+            "validator": int,
+            "default": 100,
+        }
+        settings[api_rate_limit_key] = {
+            "name": _("%(supplier)s API calls per second")
+            % {"supplier": supplier_name},
+            "description": _(
+                "Maximum %(supplier)s API requests per second (0 = unlimited)"
+            )
+            % {"supplier": supplier_name},
+            "validator": int,
+            "default": default_rate,
+        }
+        settings[api_daily_limit_key] = {
+            "name": _("%(supplier)s API calls per day")
+            % {"supplier": supplier_name},
+            "description": _(
+                "Maximum %(supplier)s API requests per day (0 = unlimited)"
+            )
+            % {"supplier": supplier_name},
+            "validator": int,
+            "default": default_daily,
+        }
+
     return settings
 
 

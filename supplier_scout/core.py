@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import time
 from difflib import SequenceMatcher
 
 from common.models import InvenTreeSetting
@@ -24,6 +25,7 @@ except Exception:  # pragma: no cover - fallback for isolated unit tests
 
 from part.models import Part
 from plugin import InvenTreePlugin
+from plugin.mixins import ScheduleMixin
 from plugin.mixins import SettingsMixin
 from plugin.mixins import UrlsMixin
 from plugin.mixins import UserInterfaceMixin
@@ -32,6 +34,7 @@ from users.permissions import check_user_role
 
 from . import PLUGIN_VERSION
 from .adapters import build_supplier_settings
+from .adapters import build_supplier_schedule_settings
 from .adapters import build_supplier_user_settings
 from .mouser import MouserSupplierAdapter
 
@@ -39,7 +42,13 @@ from .mouser import MouserSupplierAdapter
 logger = logging.getLogger(__name__)
 
 
-class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin):
+class SupplierScout(
+    ScheduleMixin,
+    SettingsMixin,
+    UrlsMixin,
+    UserInterfaceMixin,
+    InvenTreePlugin,
+):
     """SupplierScout plugin."""
 
     TITLE = _("Supplier Scout")
@@ -59,6 +68,15 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
 
     SETTINGS = {
         **build_supplier_settings(SUPPLIER_ADAPTERS.values()),
+        **build_supplier_schedule_settings(SUPPLIER_ADAPTERS.values()),
+        "RESYNC_SCHEDULER_TICK_MINUTES": {
+            "name": _("Supplier resync scheduler tick (minutes)"),
+            "description": _(
+                "How often the scheduler checks for supplier resync work. Per-supplier intervals control actual refresh frequency."
+            ),
+            "validator": int,
+            "default": 15,
+        },
         "RANKING_STRATEGY": {
             "name": _("Candidate ranking strategy"),
             "description": _("Default ranking strategy for supplier suggestions"),
@@ -128,6 +146,14 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
         },
     }
 
+    SCHEDULED_TASKS = {
+        "supplier_resync_tick": {
+            "func": "scheduled_supplier_resync",
+            "schedule": "I",
+            "minutes": 15,
+        }
+    }
+
     def get_effective_setting(self, key, user=None, backup_value=None):
         """Return user setting value if available, otherwise fallback to global setting."""
         if user and key in getattr(self, "user_settings", {}):
@@ -135,6 +161,15 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
             if user_value not in [None, ""]:
                 return user_value
         return self.get_setting(key, backup_value=backup_value)
+
+    def get_scheduled_tasks(self):
+        tasks = dict(self.SCHEDULED_TASKS)
+        tick_minutes = self._to_int_from_string(
+            self.get_setting("RESYNC_SCHEDULER_TICK_MINUTES", backup_value=15),
+            default=15,
+        )
+        tasks["supplier_resync_tick"]["minutes"] = max(1, tick_minutes)
+        return tasks
 
     # SupplierMixin-compatible internals ---------------------------------
     # These methods mirror the SupplierMixin contract so migration can happen
@@ -1604,6 +1639,261 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
 
         return adapter.get_max_candidates(default=default)
 
+    def _get_resync_last_attempt_setting_key(self, supplier_key):
+        key = re.sub(r"[^A-Za-z0-9]+", "_", str(supplier_key or "").upper()).strip(
+            "_"
+        )
+        return f"{key}_RESYNC_LAST_ATTEMPT_TS"
+
+    def _get_resync_last_success_setting_key(self, supplier_key):
+        key = re.sub(r"[^A-Za-z0-9]+", "_", str(supplier_key or "").upper()).strip(
+            "_"
+        )
+        return f"{key}_RESYNC_LAST_SUCCESS_TS"
+
+    def _get_resync_cursor_setting_key(self, supplier_key):
+        key = re.sub(r"[^A-Za-z0-9]+", "_", str(supplier_key or "").upper()).strip(
+            "_"
+        )
+        return f"{key}_RESYNC_CURSOR_PK"
+
+    def _get_resync_last_success_timestamp(self, supplier_key):
+        key = self._get_resync_last_success_setting_key(supplier_key)
+        return self._to_int_from_string(self.get_setting(key, backup_value=0), default=0)
+
+    def _set_resync_attempt_timestamp(self, supplier_key, ts):
+        self.set_setting(self._get_resync_last_attempt_setting_key(supplier_key), int(ts))
+
+    def _set_resync_success_timestamp(self, supplier_key, ts):
+        self.set_setting(self._get_resync_last_success_setting_key(supplier_key), int(ts))
+
+    def _get_resync_cursor_pk(self, supplier_key):
+        key = self._get_resync_cursor_setting_key(supplier_key)
+        return self._to_int_from_string(self.get_setting(key, backup_value=0), default=0)
+
+    def _set_resync_cursor_pk(self, supplier_key, pk):
+        self.set_setting(self._get_resync_cursor_setting_key(supplier_key), int(pk or 0))
+
+    def _is_supplier_resync_due(self, adapter, now_ts):
+        interval_seconds = max(1, adapter.get_resync_interval_minutes(default=1440)) * 60
+        last_success = self._get_resync_last_success_timestamp(adapter.key)
+
+        if last_success <= 0:
+            return True
+
+        return (int(now_ts) - int(last_success)) >= interval_seconds
+
+    def _select_resync_candidate(self, adapter, supplier_part, candidates):
+        sku_target = str(getattr(supplier_part, "SKU", "") or "").strip().lower()
+        mpn_target = ""
+        manufacturer_part = getattr(supplier_part, "manufacturer_part", None)
+        if manufacturer_part is not None:
+            mpn_target = str(getattr(manufacturer_part, "MPN", "") or "").strip().lower()
+
+        normalized = [adapter.normalize_candidate(candidate) for candidate in (candidates or [])]
+
+        if sku_target:
+            for candidate in normalized:
+                if (
+                    adapter.get_candidate_supplier_part_number(candidate).strip().lower()
+                    == sku_target
+                ):
+                    return candidate
+
+        if mpn_target:
+            for candidate in normalized:
+                if (
+                    adapter.get_candidate_manufacturer_part_number(candidate)
+                    .strip()
+                    .lower()
+                    == mpn_target
+                ):
+                    return candidate
+
+        return None
+
+    def _select_resync_supplier_parts(
+        self,
+        registration,
+        adapter,
+        *,
+        part_pk=None,
+        use_round_robin=True,
+    ):
+        supplier_pk = int(registration.get("pk") or 0)
+        supplier = Company.objects.filter(pk=supplier_pk).first()
+        if supplier is None:
+            return supplier, []
+
+        batch_size = adapter.get_resync_batch_size(default=100)
+
+        queryset = (
+            SupplierPart.objects.filter(supplier_id=supplier_pk)
+            .select_related("part", "manufacturer_part")
+            .order_by("pk")
+        )
+
+        if part_pk is not None:
+            queryset = queryset.filter(part_id=int(part_pk))
+
+        if part_pk is not None or not use_round_robin:
+            return supplier, list(queryset[:batch_size])
+
+        cursor = self._get_resync_cursor_pk(adapter.key)
+        supplier_parts = list(queryset.filter(pk__gt=cursor)[:batch_size])
+
+        if not supplier_parts and cursor > 0:
+            supplier_parts = list(queryset[:batch_size])
+
+        return supplier, supplier_parts
+
+    def _resync_registered_supplier(
+        self,
+        registration,
+        adapter,
+        *,
+        part_pk=None,
+        use_round_robin=True,
+    ):
+        supplier_pk = int(registration.get("pk") or 0)
+        supplier, supplier_parts = self._select_resync_supplier_parts(
+            registration,
+            adapter,
+            part_pk=part_pk,
+            use_round_robin=use_round_robin,
+        )
+
+        if supplier is None:
+            return {
+                "status": "error",
+                "updated": 0,
+                "created": 0,
+                "failed": 1,
+                "skipped": 0,
+                "processed": 0,
+                "message": "Supplier company not found",
+            }
+
+        max_candidates = adapter.get_max_candidates(default=10)
+
+        first_pk = supplier_parts[0].pk if supplier_parts else None
+        last_pk = supplier_parts[-1].pk if supplier_parts else None
+
+        summary = {
+            "status": "ok",
+            "updated": 0,
+            "created": 0,
+            "failed": 0,
+            "skipped": 0,
+            "processed": len(supplier_parts),
+            "first_supplier_part_pk": first_pk,
+            "last_supplier_part_pk": last_pk,
+            "round_robin": bool(part_pk is None and use_round_robin),
+        }
+
+        for supplier_part in supplier_parts:
+            part = getattr(supplier_part, "part", None)
+            if part is None:
+                summary["skipped"] += 1
+                continue
+
+            query = str(getattr(supplier_part, "SKU", "") or "").strip()
+            if query == "":
+                manufacturer_part = getattr(supplier_part, "manufacturer_part", None)
+                query = str(getattr(manufacturer_part, "MPN", "") or "").strip()
+
+            if query == "":
+                summary["skipped"] += 1
+                continue
+
+            try:
+                response = adapter.get_candidates(
+                    query,
+                    max_results=max_candidates,
+                    user=None,
+                )
+            except Exception:
+                summary["failed"] += 1
+                continue
+
+            if response.get("error_status") != "OK":
+                summary["failed"] += 1
+                continue
+
+            selected = self._select_resync_candidate(
+                adapter,
+                supplier_part,
+                response.get("candidates", []),
+            )
+
+            if selected is None:
+                summary["skipped"] += 1
+                continue
+
+            selected["_supplier_key"] = registration.get("key")
+            selected["_supplier_pk"] = supplier_pk
+
+            upsert_result = self._upsert_supplier_part_candidate(part, supplier, selected)
+            status = str(upsert_result.get("status") or "").lower()
+            if status == "updated":
+                summary["updated"] += 1
+            elif status == "created":
+                summary["created"] += 1
+            else:
+                summary["failed"] += 1
+
+        if part_pk is None and use_round_robin:
+            if supplier_parts:
+                self._set_resync_cursor_pk(adapter.key, supplier_parts[-1].pk)
+            elif self._get_resync_cursor_pk(adapter.key) > 0:
+                self._set_resync_cursor_pk(adapter.key, 0)
+
+        return summary
+
+    def scheduled_supplier_resync(self):
+        now_ts = self._to_int_from_string(time.time(), default=0)
+        registrations = self._get_registered_suppliers()
+
+        for registration in registrations:
+            supplier_key = registration.get("key")
+            adapter = self._get_supplier_definition(supplier_key)
+            if adapter is None:
+                continue
+
+            if not adapter.get_resync_enabled():
+                continue
+
+            if not adapter.has_search_credentials(user=None):
+                continue
+
+            if not self._is_supplier_resync_due(adapter, now_ts):
+                continue
+
+            self._set_resync_attempt_timestamp(supplier_key, now_ts)
+
+            try:
+                result = self._resync_registered_supplier(registration, adapter)
+            except Exception as exc:
+                logger.warning(
+                    "Supplier scheduled resync failed for %s: %s",
+                    supplier_key,
+                    exc,
+                )
+                continue
+
+            if result.get("failed", 0) == 0:
+                self._set_resync_success_timestamp(supplier_key, now_ts)
+
+            logger.info(
+                "Supplier resync for %s processed=%s updated=%s created=%s failed=%s skipped=%s",
+                supplier_key,
+                result.get("processed", 0),
+                result.get("updated", 0),
+                result.get("created", 0),
+                result.get("failed", 0),
+                result.get("skipped", 0),
+            )
+
     def get_candidates(
         self, supplier, query, max_results=25, user=None, min_qty=None, max_qty=None
     ):
@@ -1637,11 +1927,154 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
                 name="apply-candidates",
             ),
             re_path(
+                r"runresync(?:\.(?P<format>json))?$",
+                self.run_resync,
+                name="run-resync",
+            ),
+            re_path(
+                r"ratelimitstatus(?:\.(?P<format>json))?$",
+                self.rate_limit_status,
+                name="rate-limit-status",
+            ),
+            re_path(
                 r"tokendebug(?:\.(?P<format>json))?$",
                 self.token_debug,
                 name="token-debug",
             ),
         ]
+
+    def _get_rate_limit_status_payload(self, supplier_pk=None):
+        suppliers = []
+
+        for registration in self._get_registered_suppliers():
+            try:
+                registration_pk = int(registration.get("pk") or 0)
+            except Exception:
+                registration_pk = 0
+
+            if supplier_pk is not None and registration_pk != int(supplier_pk):
+                continue
+
+            adapter = self._get_supplier_definition(registration.get("key"))
+            if adapter is None:
+                continue
+
+            usage = adapter.get_api_usage_status()
+            usage["supplier_pk"] = registration_pk
+            usage["configured"] = adapter.has_search_credentials(user=None)
+            suppliers.append(usage)
+
+        return {
+            "message": "OK",
+            "suppliers": suppliers,
+            "updated_ts": int(time.time()),
+        }
+
+    def rate_limit_status(self, request):
+        supplier_pk = None
+
+        if request.method.upper() == "GET":
+            raw_supplier = (request.GET or {}).get("supplier")
+        else:
+            raw_supplier = self._decode_json_body(request).get("supplier")
+
+        try:
+            if raw_supplier not in [None, ""]:
+                supplier_pk = int(raw_supplier)
+        except Exception:
+            return JsonResponse({"message": "Invalid supplier id"}, status=400)
+
+        return JsonResponse(self._get_rate_limit_status_payload(supplier_pk=supplier_pk))
+
+    def run_resync(self, request):
+        data = self._decode_json_body(request)
+
+        try:
+            supplier_pk = int(data.get("supplier"))
+        except Exception:
+            return JsonResponse({"message": "Invalid supplier id"}, status=400)
+
+        part_pk = None
+        try:
+            if data.get("part_pk") not in [None, ""]:
+                part_pk = int(data.get("part_pk"))
+        except Exception:
+            return JsonResponse({"message": "Invalid part id"}, status=400)
+
+        action = str(data.get("action") or "").strip().lower()
+
+        registration = self._get_supplier_registration(supplier_pk)
+        if registration is None:
+            return JsonResponse({"message": "Unknown supplier"}, status=404)
+
+        adapter = self._get_supplier_definition(registration.get("key"))
+        if adapter is None:
+            return JsonResponse({"message": "Unknown supplier adapter"}, status=404)
+
+        if not adapter.has_search_credentials(user=request.user):
+            return JsonResponse(
+                {"message": "Supplier credentials are not configured"},
+                status=400,
+            )
+
+        cursor_before = self._get_resync_cursor_pk(adapter.key)
+
+        if action == "reset_cursor":
+            user = getattr(request, "user", None)
+            is_admin = bool(
+                getattr(user, "is_superuser", False)
+                or getattr(user, "is_staff", False)
+            )
+
+            if not is_admin:
+                return JsonResponse(
+                    {"message": "Admin permission required for cursor reset"},
+                    status=403,
+                )
+
+            self._set_resync_cursor_pk(adapter.key, 0)
+
+            return JsonResponse({
+                "message": "OK",
+                "scope": "supplier",
+                "action": "reset_cursor",
+                "supplier_pk": supplier_pk,
+                "cursor_before": cursor_before,
+                "cursor_after": 0,
+            })
+
+        now_ts = self._to_int_from_string(time.time(), default=0)
+        self._set_resync_attempt_timestamp(adapter.key, now_ts)
+
+        try:
+            result = self._resync_registered_supplier(
+                registration,
+                adapter,
+                part_pk=part_pk,
+                use_round_robin=part_pk is None,
+            )
+        except Exception as exc:
+            return JsonResponse(
+                {"message": f"Resync failed: {exc}"},
+                status=500,
+            )
+
+        if result.get("failed", 0) == 0:
+            self._set_resync_success_timestamp(adapter.key, now_ts)
+
+        cursor_after = self._get_resync_cursor_pk(adapter.key)
+
+        scope = "part" if part_pk is not None else "supplier"
+        result["message"] = "OK"
+        result["scope"] = scope
+        result["supplier_pk"] = supplier_pk
+        result["action"] = "resync"
+        result["cursor_before"] = cursor_before
+        result["cursor_after"] = cursor_after
+        if part_pk is not None:
+            result["part_pk"] = part_pk
+
+        return JsonResponse(result)
 
     def token_debug(self, request):
         """Return token attribution debug data for a part.
@@ -1767,6 +2200,8 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
                 "title": "Supplier Part Matching",
                 "search_url": f"/{self.base_url}searchcandidates",
                 "apply_url": f"/{self.base_url}applycandidates",
+                "run_resync_url": f"/{self.base_url}runresync",
+                "rate_status_url": f"/{self.base_url}ratelimitstatus",
                 "default_query": self._build_initial_search_query(
                     part, user=request.user
                 ),

@@ -152,6 +152,13 @@ def _install_core_stubs():
 
         plugin_mixins_module.SettingsMixin = SettingsMixin
 
+    if not hasattr(plugin_mixins_module, "ScheduleMixin"):
+
+        class ScheduleMixin:
+            pass
+
+        plugin_mixins_module.ScheduleMixin = ScheduleMixin
+
     if not hasattr(plugin_mixins_module, "UrlsMixin"):
 
         class UrlsMixin:
@@ -508,6 +515,222 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         self.assertIn(("current", "max"), by_key)
         self.assertEqual(by_key[("voltage", "min")]["value"], 5.0)
         self.assertEqual(by_key[("current", "max")]["value"], 0.25)
+
+    def test_get_rate_limit_status_payload_includes_supplier_usage(self):
+        class FakeAdapter:
+            key = "mouser"
+
+            def get_api_usage_status(self):
+                return {
+                    "supplier_key": "mouser",
+                    "rate_limit_per_second": 1,
+                    "daily_limit": 1000,
+                    "daily_count": 42,
+                    "daily_remaining": 958,
+                    "daily_percent_used": 4.2,
+                    "daily_reset_at": "2030-01-02T00:00:00Z",
+                }
+
+            def has_search_credentials(self, user=None):
+                del user
+                return True
+
+        self.scout._get_registered_suppliers = lambda: [
+            {"key": "mouser", "pk": 7, "name": "Mouser"}
+        ]
+        self.scout._get_supplier_definition = (
+            lambda supplier_key: FakeAdapter() if supplier_key == "mouser" else None
+        )
+
+        payload = self.scout._get_rate_limit_status_payload(supplier_pk=7)
+
+        self.assertEqual(payload["message"], "OK")
+        self.assertEqual(len(payload["suppliers"]), 1)
+        self.assertEqual(payload["suppliers"][0]["supplier_pk"], 7)
+        self.assertEqual(payload["suppliers"][0]["daily_count"], 42)
+        self.assertTrue(payload["suppliers"][0]["configured"])
+
+    def test_is_supplier_resync_due_uses_interval_and_last_success(self):
+        class FakeAdapter:
+            key = "mouser"
+
+            def get_resync_interval_minutes(self, default=1440):
+                del default
+                return 60
+
+        now_ts = 1_000_000
+        key = self.scout._get_resync_last_success_setting_key("mouser")
+
+        # Never synced before -> due
+        self.settings.pop(key, None)
+        self.assertTrue(self.scout._is_supplier_resync_due(FakeAdapter(), now_ts))
+
+        # Last success too recent -> not due
+        self.settings[key] = now_ts - (30 * 60)
+        self.assertFalse(self.scout._is_supplier_resync_due(FakeAdapter(), now_ts))
+
+        # Last success older than interval -> due
+        self.settings[key] = now_ts - (61 * 60)
+        self.assertTrue(self.scout._is_supplier_resync_due(FakeAdapter(), now_ts))
+
+    def test_select_resync_candidate_prefers_sku_then_mpn(self):
+        class FakeAdapter:
+            def normalize_candidate(self, candidate):
+                return dict(candidate)
+
+            def get_candidate_supplier_part_number(self, candidate):
+                return str(candidate.get("supplier_part_number") or "")
+
+            def get_candidate_manufacturer_part_number(self, candidate):
+                return str(candidate.get("manufacturer_part_number") or "")
+
+        class ManufacturerPart:
+            MPN = "MPN-42"
+
+        class SupplierPartRecord:
+            SKU = "SKU-123"
+            manufacturer_part = ManufacturerPart()
+
+        adapter = FakeAdapter()
+        supplier_part = SupplierPartRecord()
+
+        candidates = [
+            {
+                "supplier_part_number": "SKU-123",
+                "manufacturer_part_number": "MPN-OTHER",
+            },
+            {
+                "supplier_part_number": "SKU-OTHER",
+                "manufacturer_part_number": "MPN-42",
+            },
+        ]
+
+        selected = self.scout._select_resync_candidate(adapter, supplier_part, candidates)
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.get("supplier_part_number"), "SKU-123")
+
+    def test_select_resync_candidate_returns_none_when_no_exact_match(self):
+        class FakeAdapter:
+            def normalize_candidate(self, candidate):
+                return dict(candidate)
+
+            def get_candidate_supplier_part_number(self, candidate):
+                return str(candidate.get("supplier_part_number") or "")
+
+            def get_candidate_manufacturer_part_number(self, candidate):
+                return str(candidate.get("manufacturer_part_number") or "")
+
+        class ManufacturerPart:
+            MPN = "MPN-42"
+
+        class SupplierPartRecord:
+            SKU = "SKU-123"
+            manufacturer_part = ManufacturerPart()
+
+        selected = self.scout._select_resync_candidate(
+            FakeAdapter(),
+            SupplierPartRecord(),
+            [
+                {
+                    "supplier_part_number": "SKU-OTHER",
+                    "manufacturer_part_number": "MPN-OTHER",
+                }
+            ],
+        )
+
+        self.assertIsNone(selected)
+
+    def test_select_resync_supplier_parts_round_robin_wraparound(self):
+        class FakeSupplierPart:
+            def __init__(self, pk):
+                self.pk = pk
+
+        class FakeQuerySet:
+            def __init__(self, items):
+                self._items = list(items)
+
+            def filter(self, **kwargs):
+                items = self._items
+                if "pk__gt" in kwargs:
+                    threshold = int(kwargs.get("pk__gt") or 0)
+                    items = [item for item in items if item.pk > threshold]
+                if "part_id" in kwargs:
+                    part_id = int(kwargs.get("part_id") or 0)
+                    # In this test all fake rows map to part_id=1
+                    items = items if part_id == 1 else []
+                return FakeQuerySet(items)
+
+            def select_related(self, *args, **kwargs):
+                del args, kwargs
+                return self
+
+            def order_by(self, *args, **kwargs):
+                del args, kwargs
+                return self
+
+            def __getitem__(self, key):
+                return self._items[key]
+
+        class FakeSupplierPartManager:
+            def __init__(self, items):
+                self._items = items
+
+            def filter(self, **kwargs):
+                supplier_id = int(kwargs.get("supplier_id") or 0)
+                del supplier_id
+                return FakeQuerySet(self._items)
+
+        class FakeCompanyQuery:
+            def first(self):
+                return object()
+
+        class FakeCompanyManager:
+            def filter(self, **kwargs):
+                del kwargs
+                return FakeCompanyQuery()
+
+        class FakeAdapter:
+            key = "mouser"
+
+            def get_resync_batch_size(self, default=100):
+                del default
+                return 2
+
+        from supplier_scout import core as core_module
+
+        original_supplier_part_objects = core_module.SupplierPart.objects
+        original_company_objects = core_module.Company.objects
+
+        try:
+            core_module.SupplierPart.objects = FakeSupplierPartManager(
+                [FakeSupplierPart(1), FakeSupplierPart(2), FakeSupplierPart(3)]
+            )
+            core_module.Company.objects = FakeCompanyManager()
+
+            self.scout._get_resync_cursor_pk = lambda supplier_key: 2
+            supplier, rows = self.scout._select_resync_supplier_parts(
+                {"pk": 7},
+                FakeAdapter(),
+                part_pk=None,
+                use_round_robin=True,
+            )
+
+            self.assertIsNotNone(supplier)
+            self.assertEqual([row.pk for row in rows], [3])
+
+            self.scout._get_resync_cursor_pk = lambda supplier_key: 99
+            supplier, rows = self.scout._select_resync_supplier_parts(
+                {"pk": 7},
+                FakeAdapter(),
+                part_pk=None,
+                use_round_robin=True,
+            )
+
+            self.assertIsNotNone(supplier)
+            self.assertEqual([row.pk for row in rows], [1, 2])
+        finally:
+            core_module.SupplierPart.objects = original_supplier_part_objects
+            core_module.Company.objects = original_company_objects
 
 
 if __name__ == "__main__":

@@ -8,6 +8,8 @@ on: ["push", "pull_request"]
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      COVERAGE_MIN: "45"
     steps:
       - name: Checkout Code
         uses: actions/checkout@v2
@@ -18,10 +20,23 @@ jobs:
       - name: Install Deps
         run: |
           pip install -U ruff
+          pip install -U coverage
           pip install -U wheel setuptools twine build
       - name: Style Checks
         run: |
           ruff check
+      - name: Unit Tests (Coverage)
+        run: |
+          coverage run -m unittest discover -s supplier_scout -p "test_*.py"
+          coverage report -m --fail-under=${COVERAGE_MIN}
+          coverage xml
+      - name: Upload Coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          fail_ci_if_error: false
+          verbose: true
       - name: Build Plugin
         run: |
           python -m build

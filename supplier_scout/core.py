@@ -13,6 +13,15 @@ from company.models import SupplierPriceBreak
 from django.conf import settings
 from django.http import JsonResponse
 from django.urls import re_path
+
+try:
+    from django.utils.translation import gettext_lazy as _  # type: ignore[import-not-found]
+except Exception:  # pragma: no cover - fallback for isolated unit tests
+
+    def _(value):
+        return value
+
+
 from part.models import Part
 from plugin import InvenTreePlugin
 from plugin.mixins import SettingsMixin
@@ -33,10 +42,10 @@ logger = logging.getLogger(__name__)
 class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin):
     """SupplierScout plugin."""
 
-    TITLE = "Supplier Scout"
+    TITLE = _("Supplier Scout")
     NAME = "SupplierScout"
     SLUG = "supplierscout"
-    DESCRIPTION = "Part search, matching and ordering with popular suppliers"
+    DESCRIPTION = _("Part search, matching and ordering with popular suppliers")
     VERSION = PLUGIN_VERSION
 
     AUTHOR = "Charles Price"
@@ -51,32 +60,38 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
     SETTINGS = {
         **build_supplier_settings(SUPPLIER_ADAPTERS.values()),
         "RANKING_STRATEGY": {
-            "name": "Candidate ranking strategy",
-            "description": "Default ranking strategy for supplier suggestions",
+            "name": _("Candidate ranking strategy"),
+            "description": _("Default ranking strategy for supplier suggestions"),
             "choices": [
-                ("balanced", "Balanced score"),
-                ("availability", "Availability first"),
-                ("price", "Price first"),
+                ("balanced", _("Balanced score")),
+                ("availability", _("Availability first")),
+                ("price", _("Price first")),
             ],
             "default": "balanced",
         },
         "TOKEN_PARAMETER_NAMES": {
-            "name": "Token parameter names",
-            "description": "Comma or newline separated parameter names used for token generation. Leave empty to use all parameters.",
+            "name": _("Token parameter names"),
+            "description": _(
+                "Comma or newline separated parameter names used for token generation. Leave empty to use all parameters."
+            ),
             "default": "",
         },
         "TOKEN_INCLUDE_CATEGORY_NAMES": {
-            "name": "Include category name tokens",
-            "description": "Include part category names (and parents) in generated search tokens.",
+            "name": _("Include category name tokens"),
+            "description": _(
+                "Include part category names (and parents) in generated search tokens."
+            ),
             "default": True,
         },
         "TOKEN_NAME_MODE": {
-            "name": "Name token strategy",
-            "description": "How part name/description tokens are used in auto-generated supplier queries.",
+            "name": _("Name token strategy"),
+            "description": _(
+                "How part name/description tokens are used in auto-generated supplier queries."
+            ),
             "choices": [
-                ("fallback", "Only when structured tokens are unavailable"),
-                ("always", "Always include name and description tokens"),
-                ("never", "Never include name and description tokens"),
+                ("fallback", _("Only when structured tokens are unavailable")),
+                ("always", _("Always include name and description tokens")),
+                ("never", _("Never include name and description tokens")),
             ],
             "default": "fallback",
         },
@@ -85,27 +100,29 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
     USER_SETTINGS = {
         **build_supplier_user_settings(SUPPLIER_ADAPTERS.values()),
         "RANKING_STRATEGY": {
-            "name": "Candidate ranking strategy (user override)",
-            "description": "User-specific ranking strategy (overrides global value)",
+            "name": _("Candidate ranking strategy (user override)"),
+            "description": _("User-specific ranking strategy (overrides global value)"),
             "choices": [
-                ("balanced", "Balanced score"),
-                ("availability", "Availability first"),
-                ("price", "Price first"),
+                ("balanced", _("Balanced score")),
+                ("availability", _("Availability first")),
+                ("price", _("Price first")),
             ],
             "default": "balanced",
         },
         "TOP_N_CANDIDATES": {
-            "name": "Top N candidate results (user override)",
-            "description": "Default number of ranked candidates shown",
+            "name": _("Top N candidate results (user override)"),
+            "description": _("Default number of ranked candidates shown"),
             "default": 10,
         },
         "TOKEN_NAME_MODE": {
-            "name": "Name token strategy (user override)",
-            "description": "How part name/description tokens are used in auto-generated supplier queries.",
+            "name": _("Name token strategy (user override)"),
+            "description": _(
+                "How part name/description tokens are used in auto-generated supplier queries."
+            ),
             "choices": [
-                ("fallback", "Only when structured tokens are unavailable"),
-                ("always", "Always include name and description tokens"),
-                ("never", "Never include name and description tokens"),
+                ("fallback", _("Only when structured tokens are unavailable")),
+                ("always", _("Always include name and description tokens")),
+                ("never", _("Never include name and description tokens")),
             ],
             "default": "fallback",
         },
@@ -354,14 +371,14 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
 
         if name == "":
             raise supplier.PartImportError(
-                "Candidate does not include a usable part name"
+                _("Candidate does not include a usable part name")
             )
 
         part = Part.objects.filter(name__iexact=name).first()
         if part is None:
             if category is None:
                 raise supplier.PartImportError(
-                    "Category is required when importing a new part"
+                    _("Category is required when importing a new part")
                 )
 
             part = Part.objects.create(
@@ -378,7 +395,7 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
         supplier_key = str(candidate.get("_supplier_key") or "").strip().lower()
         adapter = self._get_supplier_definition(supplier_key)
         if adapter is None:
-            raise supplier.PartImportError("Unknown supplier adapter for import")
+            raise supplier.PartImportError(_("Unknown supplier adapter for import"))
 
         manufacturer_part = self._resolve_candidate_manufacturer_part(
             part=part,
@@ -387,7 +404,7 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
         )
 
         if manufacturer_part is None:
-            raise supplier.PartImportError("Failed to resolve manufacturer part")
+            raise supplier.PartImportError(_("Failed to resolve manufacturer part"))
 
         return manufacturer_part
 
@@ -396,22 +413,22 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
         supplier_pk = self._to_int_from_string(candidate.get("_supplier_pk"), default=0)
         if supplier_pk <= 0:
             raise supplier.PartImportError(
-                "Supplier import context is missing supplier PK"
+                _("Supplier import context is missing supplier PK")
             )
 
         supplier_company = Company.objects.filter(pk=supplier_pk).first()
         if supplier_company is None:
-            raise supplier.PartImportError("Supplier company not found")
+            raise supplier.PartImportError(_("Supplier company not found"))
 
         supplier_key = str(candidate.get("_supplier_key") or "").strip().lower()
         adapter = self._get_supplier_definition(supplier_key)
         if adapter is None:
-            raise supplier.PartImportError("Unknown supplier adapter for import")
+            raise supplier.PartImportError(_("Unknown supplier adapter for import"))
 
         candidate = adapter.normalize_candidate(candidate)
         sku = adapter.get_candidate_supplier_part_number(candidate)
         if sku == "":
-            raise supplier.PartImportError("Candidate supplier part number missing")
+            raise supplier.PartImportError(_("Candidate supplier part number missing"))
 
         supplier_part = SupplierPart.objects.filter(
             part=part,
@@ -1603,7 +1620,7 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
                 )
 
         return {
-            "error_status": "Unknown supplier for candidate search",
+            "error_status": _("Unknown supplier for candidate search"),
             "candidates": [],
         }
 

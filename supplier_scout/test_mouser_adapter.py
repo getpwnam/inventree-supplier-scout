@@ -12,6 +12,7 @@ import types
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
+from unittest.mock import patch
 
 
 def _install_inventree_stubs():
@@ -81,10 +82,23 @@ class TestMouserSupplierAdapter(unittest.TestCase):
         self.adapter = MouserSupplierAdapter(
             DummyPlugin({
                 "MOUSER_CACHE_TTL": 3600,
-                "MOUSERLANGUAGE": "English",
                 "MOUSER_MIN_PRICE_QUANTITY": 1,
             })
         )
+
+    def test_get_mouser_package_uses_active_locale_with_fallback(self):
+        part_data = {
+            "ProductAttributes": [
+                {"AttributeName": "Packaging", "AttributeValue": "Reel"},
+                {"AttributeName": "Verpackung", "AttributeValue": "Gurt"},
+            ]
+        }
+
+        with patch("supplier_scout.mouser.get_language", return_value="en-us"):
+            self.assertEqual(self.adapter.get_mouser_package(part_data), "Reel, Gurt")
+
+        with patch("supplier_scout.mouser.get_language", return_value="de-DE"):
+            self.assertEqual(self.adapter.get_mouser_package(part_data), "Reel, Gurt")
 
     def test_reformat_mouser_price_supports_common_formats(self):
         self.assertEqual(self.adapter.reformat_mouser_price("1.456,34 €"), 1456.34)

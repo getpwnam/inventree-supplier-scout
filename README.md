@@ -26,6 +26,17 @@ pip install inventree-supplier-scout
 
 ## Testing and Coverage
 
+### Backend Translation Check
+
+Run the backend translation guard locally:
+
+```bash
+python3 .github/scripts/check_backend_translations.py
+```
+
+This check fails if user-facing backend strings are not wrapped for translation
+using the gettext alias `_()` in plugin Python code.
+
 Run unit tests locally:
 
 ```bash
@@ -51,6 +62,7 @@ Run the backend CI checks locally:
 ```bash
 python3 -m pip install -U ruff coverage wheel setuptools twine build
 ruff check
+python3 .github/scripts/check_backend_translations.py
 coverage run -m unittest discover -s supplier_scout -p "test_*.py"
 coverage report -m --fail-under=45
 coverage xml

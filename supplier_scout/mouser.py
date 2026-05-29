@@ -8,64 +8,77 @@ from pathlib import Path
 
 from common.models import InvenTreeSetting
 
+try:
+    from django.utils.translation import get_language  # type: ignore[import-not-found]
+    from django.utils.translation import gettext_lazy as _  # type: ignore[import-not-found]
+except Exception:  # pragma: no cover - fallback for isolated unit tests
+
+    def _(value):
+        return value
+
+    def get_language():
+        return "en"
+
+
 from .adapters import BaseSupplierAdapter
 from .adapters import SupplierAPIClient
 
 
 MOUSER_SETTINGS = {
     "MOUSER_PK": {
-        "name": "Mouser Supplier ID",
-        "description": "Primary key of the Mouser supplier",
+        "name": _("Mouser Supplier ID"),
+        "description": _("Primary key of the Mouser supplier"),
         "model": "company.company",
     },
     "MOUSERSEARCHKEY": {
-        "name": "Mouser search API key",
-        "description": "Mouser part search API key",
+        "name": _("Mouser search API key"),
+        "description": _("Mouser part search API key"),
     },
     "MOUSER_MAX_CANDIDATES": {
-        "name": "Mouser max candidates",
-        "description": "Maximum number of Mouser candidates considered for ranking",
+        "name": _("Mouser max candidates"),
+        "description": _("Maximum number of Mouser candidates considered for ranking"),
         "default": 40,
     },
-    "MOUSERLANGUAGE": {
-        "name": "Mouser API language",
-        "description": "Language for Mouser API responses",
-        "choices": [
-            ("English", "English"),
-            ("German", "German"),
-        ],
-        "default": "English",
-    },
     "MOUSER_MIN_PRICE_QUANTITY": {
-        "name": "Mouser minimum quantity for price selection",
-        "description": "Select the best price for at least this quantity (e.g., 1 for single units, 10 for tape). Leave blank for no limit.",
+        "name": _("Mouser minimum quantity for price selection"),
+        "description": _(
+            "Select the best price for at least this quantity (e.g., 1 for single units, 10 for tape). Leave blank for no limit."
+        ),
         "default": 1,
     },
     "MOUSER_MAX_PRICE_QUANTITY": {
-        "name": "Mouser maximum quantity for price selection",
-        "description": "Prefer prices for quantities up to this number (e.g., 50 for hobby, 1000 for production). Leave blank for no limit.",
+        "name": _("Mouser maximum quantity for price selection"),
+        "description": _(
+            "Prefer prices for quantities up to this number (e.g., 50 for hobby, 1000 for production). Leave blank for no limit."
+        ),
         "default": "",
     },
     "MOUSER_CACHE_TTL": {
-        "name": "Mouser response cache TTL",
-        "description": "Cache Mouser API responses for this many seconds (3600 = 1 hour, 0 = disabled). Reduces API calls and rate limiting.",
+        "name": _("Mouser response cache TTL"),
+        "description": _(
+            "Cache Mouser API responses for this many seconds (3600 = 1 hour, 0 = disabled). Reduces API calls and rate limiting."
+        ),
         "default": 3600,
     },
 }
 
 MOUSER_USER_SETTINGS = {
     "MOUSERSEARCHKEY": {
-        "name": "Mouser search API key (user override)",
-        "description": "User-specific Mouser search API key",
+        "name": _("Mouser search API key (user override)"),
+        "description": _("User-specific Mouser search API key"),
         "protected": True,
     },
     "MOUSER_MIN_PRICE_QUANTITY": {
-        "name": "Mouser minimum quantity for price selection (user override)",
-        "description": "Select the best price for at least this quantity (e.g., 1 for single units, 10 for tape).",
+        "name": _("Mouser minimum quantity for price selection (user override)"),
+        "description": _(
+            "Select the best price for at least this quantity (e.g., 1 for single units, 10 for tape)."
+        ),
     },
     "MOUSER_MAX_PRICE_QUANTITY": {
-        "name": "Mouser maximum quantity for price selection (user override)",
-        "description": "Prefer prices for quantities up to this number (e.g., 50 for hobby, 1000 for production).",
+        "name": _("Mouser maximum quantity for price selection (user override)"),
+        "description": _(
+            "Prefer prices for quantities up to this number (e.g., 50 for hobby, 1000 for production)."
+        ),
     },
 }
 
@@ -326,7 +339,7 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
                 response = self._post(url, payload)
             except Exception:
                 return {
-                    "error_status": "Connection to Mouser API failed",
+                    "error_status": _("Connection to Mouser API failed"),
                     "parts": [],
                 }
 
@@ -334,7 +347,7 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
                 response_data = response.json()
             except Exception:
                 return {
-                    "error_status": "Invalid JSON response from Mouser",
+                    "error_status": _("Invalid JSON response from Mouser"),
                     "parts": [],
                 }
 
@@ -344,7 +357,7 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         errors = response_data.get("Errors") or []
         if errors:
             code = errors[0].get("Code")
-            message = errors[0].get("Message") or code or "Mouser search error"
+            message = errors[0].get("Message") or code or _("Mouser search error")
 
             if code in ["SearchNotFound", "NotFound"]:
                 return {"error_status": "OK", "parts": []}
@@ -373,7 +386,7 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         query = str(query or "").strip()
         if query == "":
             return {
-                "error_status": "Search query cannot be empty",
+                "error_status": _("Search query cannot be empty"),
                 "candidates": [],
                 "debug": {},
             }
@@ -442,26 +455,25 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         }
 
     def get_mouser_package(self, part_data):
-        attribute_names = {
-            "packaging": {"German": "Verpackung", "English": "Packaging"}
-        }
-        package = ""
         try:
             attributes = part_data["ProductAttributes"]
         except Exception:
             return None
 
-        language = (self.get_setting("MOUSERLANGUAGE") or "English").strip()
-        if language not in attribute_names["packaging"]:
-            language = "English"
+        language = str(get_language() or "en").strip().lower().replace("_", "-")
+        packaging_labels = ["Packaging", "Verpackung"]
+        if language.startswith("de"):
+            packaging_labels = ["Verpackung", "Packaging"]
 
-        packaging_name = attribute_names["packaging"].get(language, "Packaging")
-
+        packaging_name_set = {label.casefold() for label in packaging_labels}
+        matches = []
         for attribute in attributes:
-            if attribute.get("AttributeName") == packaging_name:
-                package = package + attribute.get("AttributeValue", "") + ", "
+            attribute_name = str(attribute.get("AttributeName") or "").strip()
+            attribute_value = str(attribute.get("AttributeValue") or "").strip()
+            if attribute_name.casefold() in packaging_name_set and attribute_value:
+                matches.append(attribute_value)
 
-        return package or None
+        return ", ".join(matches) or None
 
     def reformat_mouser_price(self, price):
         # Remove currency symbols and whitespace

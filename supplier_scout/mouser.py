@@ -1,6 +1,10 @@
 """Mouser supplier adapter."""
 
+import hashlib
+import json
 import re
+import time
+from pathlib import Path
 
 from common.models import InvenTreeSetting
 
@@ -32,6 +36,21 @@ MOUSER_SETTINGS = {
         ],
         "default": "English",
     },
+    "MOUSER_MIN_PRICE_QUANTITY": {
+        "name": "Mouser minimum quantity for price selection",
+        "description": "Select the best price for at least this quantity (e.g., 1 for single units, 10 for tape). Leave blank for no limit.",
+        "default": 1,
+    },
+    "MOUSER_MAX_PRICE_QUANTITY": {
+        "name": "Mouser maximum quantity for price selection",
+        "description": "Prefer prices for quantities up to this number (e.g., 50 for hobby, 1000 for production). Leave blank for no limit.",
+        "default": "",
+    },
+    "MOUSER_CACHE_TTL": {
+        "name": "Mouser response cache TTL",
+        "description": "Cache Mouser API responses for this many seconds (3600 = 1 hour, 0 = disabled). Reduces API calls and rate limiting.",
+        "default": 3600,
+    },
 }
 
 MOUSER_USER_SETTINGS = {
@@ -39,6 +58,14 @@ MOUSER_USER_SETTINGS = {
         "name": "Mouser search API key (user override)",
         "description": "User-specific Mouser search API key",
         "protected": True,
+    },
+    "MOUSER_MIN_PRICE_QUANTITY": {
+        "name": "Mouser minimum quantity for price selection (user override)",
+        "description": "Select the best price for at least this quantity (e.g., 1 for single units, 10 for tape).",
+    },
+    "MOUSER_MAX_PRICE_QUANTITY": {
+        "name": "Mouser maximum quantity for price selection (user override)",
+        "description": "Prefer prices for quantities up to this number (e.g., 50 for hobby, 1000 for production).",
     },
 }
 
@@ -75,6 +102,76 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
                 "Accept": "application/json",
             },
         )
+
+    def has_search_credentials(self, user=None):
+        api_key = str(
+            self.get_effective_setting("MOUSERSEARCHKEY", user=user, backup_value="")
+            or ""
+        ).strip()
+        return api_key != ""
+
+    def _get_cache_dir(self):
+        """Return the cache directory path, creating it if necessary."""
+        cache_dir = Path.home() / ".cache" / "inventree_mouser"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir
+
+    def _build_cache_key(self, url, payload):
+        """Build a unique cache key from URL and payload."""
+        key_str = f"{url}:{json.dumps(payload, sort_keys=True)}"
+        return hashlib.sha256(key_str.encode()).hexdigest()
+
+    def _get_cache_ttl_seconds(self):
+        """Get cache TTL in seconds from settings."""
+        try:
+            ttl = int(self.get_setting("MOUSER_CACHE_TTL") or 3600)
+            return max(0, ttl)  # Ensure non-negative
+        except (ValueError, TypeError):
+            return 3600
+
+    def _get_cached_response(self, url, payload):
+        """Get cached response if fresh, otherwise fetch from API and cache it.
+
+        Returns the response object or None if not found/stale.
+        """
+        ttl_seconds = self._get_cache_ttl_seconds()
+        if ttl_seconds <= 0:
+            # Caching disabled
+            return None
+
+        cache_key = self._build_cache_key(url, payload)
+        cache_file = self._get_cache_dir() / f"{cache_key}.json"
+
+        # Check if cache exists and is fresh
+        if cache_file.exists():
+            try:
+                stat = cache_file.stat()
+                age_seconds = time.time() - stat.st_mtime
+
+                if age_seconds < ttl_seconds:
+                    # Cache is fresh, load and return it
+                    data = json.loads(cache_file.read_text())
+                    return data
+            except (OSError, json.JSONDecodeError):
+                # Cache file corrupted or unreadable, proceed to API call
+                pass
+
+        return None
+
+    def _cache_response(self, url, payload, response_data):
+        """Store response in cache."""
+        ttl_seconds = self._get_cache_ttl_seconds()
+        if ttl_seconds <= 0:
+            # Caching disabled
+            return
+
+        try:
+            cache_key = self._build_cache_key(url, payload)
+            cache_file = self._get_cache_dir() / f"{cache_key}.json"
+            cache_file.write_text(json.dumps(response_data, indent=2))
+        except (OSError, json.JSONDecodeError):
+            # Silently fail if cache write fails
+            pass
 
     def _post(self, url, payload):
         return self.transport.api_call(
@@ -133,20 +230,56 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
 
         return 0
 
-    def _build_candidate_from_part(self, part_data):
+    def _build_candidate_from_part(
+        self, part_data, min_qty=None, max_qty=None, user=None
+    ):
         price_breaks = []
         min_price = None
+        filtered_price = None
+        spec_attributes = {}
+
+        # Get quantity range settings for price selection (use provided values or fall back to settings)
+        if min_qty is None:
+            try:
+                min_qty_setting = (
+                    self.get_effective_setting("MOUSER_MIN_PRICE_QUANTITY", user=user)
+                    or 1
+                )
+                min_qty = int(min_qty_setting) if min_qty_setting else 1
+            except (ValueError, TypeError):
+                min_qty = 1
+
+        if max_qty is None:
+            try:
+                max_qty_setting = (
+                    self.get_effective_setting("MOUSER_MAX_PRICE_QUANTITY", user=user)
+                    or ""
+                )
+                max_qty = int(max_qty_setting) if max_qty_setting else None
+            except (ValueError, TypeError):
+                max_qty = None
 
         for price_break in part_data.get("PriceBreaks", []) or []:
             price_value = self.reformat_mouser_price(price_break.get("Price"))
+            qty = price_break.get("Quantity") or 1
+
             price_breaks.append({
-                "quantity": price_break.get("Quantity"),
+                "quantity": qty,
                 "price": price_value,
                 "currency": price_break.get("Currency"),
             })
 
+            # Track absolute minimum price (fallback)
             if min_price is None or price_value < min_price:
                 min_price = price_value
+
+        # Find price for smallest quantity within preferred range
+        filtered_price = None
+        for price_break in price_breaks:
+            qty = price_break.get("quantity", 1)
+            if qty >= min_qty and (max_qty is None or qty <= max_qty):
+                filtered_price = price_break.get("price")
+                break  # Since first match is smallest quantity in range
 
         availability = (
             part_data.get("AvailabilityInStock")
@@ -154,6 +287,16 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
             or part_data.get("MouserATS")
             or 0
         )
+
+        for attribute in part_data.get("ProductAttributes") or []:
+            attr_name = str(attribute.get("AttributeName") or "").strip()
+            attr_value = str(attribute.get("AttributeValue") or "").strip()
+            if attr_name and attr_value:
+                spec_attributes[attr_name] = attr_value
+
+        # Use filtered price if available (within preferred quantity range),
+        # otherwise fall back to absolute minimum
+        unit_price = filtered_price if filtered_price is not None else min_price
 
         return {
             "supplier_part_number": part_data.get("MouserPartNumber"),
@@ -167,26 +310,36 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
             "pack_quantity": part_data.get("Mult") or 1,
             "packaging": self.get_mouser_package(part_data),
             "price_breaks": price_breaks,
-            "unit_price": min_price,
+            "unit_price": unit_price,
             "available_quantity": self._extract_stock_qty(availability),
+            "spec_attributes": spec_attributes,
         }
 
     def _search_mouser_parts(self, url, payload):
-        try:
-            response = self._post(url, payload)
-        except Exception:
-            return {
-                "error_status": "Connection to Mouser API failed",
-                "parts": [],
-            }
+        # Try to get cached response
+        cached_data = self._get_cached_response(url, payload)
+        if cached_data is not None:
+            response_data = cached_data
+        else:
+            # Cache miss or disabled, fetch from API
+            try:
+                response = self._post(url, payload)
+            except Exception:
+                return {
+                    "error_status": "Connection to Mouser API failed",
+                    "parts": [],
+                }
 
-        try:
-            response_data = response.json()
-        except Exception:
-            return {
-                "error_status": "Invalid JSON response from Mouser",
-                "parts": [],
-            }
+            try:
+                response_data = response.json()
+            except Exception:
+                return {
+                    "error_status": "Invalid JSON response from Mouser",
+                    "parts": [],
+                }
+
+            # Cache the response for future requests
+            self._cache_response(url, payload, response_data)
 
         errors = response_data.get("Errors") or []
         if errors:
@@ -214,7 +367,9 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
             "parts": parts,
         }
 
-    def get_candidates(self, query, max_results=25, user=None):
+    def get_candidates(
+        self, query, max_results=25, user=None, min_qty=None, max_qty=None
+    ):
         query = str(query or "").strip()
         if query == "":
             return {
@@ -264,7 +419,11 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
                     continue
 
                 seen.add(supplier_part_number)
-                candidates.append(self._build_candidate_from_part(part_data))
+                candidates.append(
+                    self._build_candidate_from_part(
+                        part_data, min_qty=min_qty, max_qty=max_qty, user=user
+                    )
+                )
 
                 if len(candidates) >= max(int(max_results), 1):
                     break
@@ -305,10 +464,28 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         return package or None
 
     def reformat_mouser_price(self, price):
-        price = str(price or "").replace(".", "")
-        price = price.replace(",", ".")
-        non_decimal = re.compile(r"[^\d.]+")
-        price = non_decimal.sub("", price)
-        if price == "":
+        # Remove currency symbols and whitespace
+        price = str(price or "").strip()
+        non_numeric = re.compile(r"[^\d.,]+")
+        price = non_numeric.sub("", price)
+
+        if not price:
             return 0
-        return float(price)
+
+        # Determine which separator is decimal by position
+        # The rightmost separator is typically the decimal separator
+        last_comma = price.rfind(",")
+        last_dot = price.rfind(".")
+
+        if last_comma > last_dot:
+            # European format: comma is decimal, dots are thousands
+            price = price.replace(".", "")
+            price = price.replace(",", ".")
+        else:
+            # US format: dot is decimal, commas are thousands
+            price = price.replace(",", "")
+
+        try:
+            return float(price)
+        except ValueError:
+            return 0

@@ -1,6 +1,7 @@
 """Supplier Scout plugin core implementation."""
 
 import json
+import logging
 import re
 from difflib import SequenceMatcher
 
@@ -23,6 +24,9 @@ from . import PLUGIN_VERSION
 from .adapters import build_supplier_settings
 from .adapters import build_supplier_user_settings
 from .mouser import MouserSupplierAdapter
+
+
+logger = logging.getLogger(__name__)
 
 
 class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin):
@@ -55,6 +59,26 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
             ],
             "default": "balanced",
         },
+        "TOKEN_PARAMETER_NAMES": {
+            "name": "Token parameter names",
+            "description": "Comma or newline separated parameter names used for token generation. Leave empty to use all parameters.",
+            "default": "",
+        },
+        "TOKEN_INCLUDE_CATEGORY_NAMES": {
+            "name": "Include category name tokens",
+            "description": "Include part category names (and parents) in generated search tokens.",
+            "default": True,
+        },
+        "TOKEN_NAME_MODE": {
+            "name": "Name token strategy",
+            "description": "How part name/description tokens are used in auto-generated supplier queries.",
+            "choices": [
+                ("fallback", "Only when structured tokens are unavailable"),
+                ("always", "Always include name and description tokens"),
+                ("never", "Never include name and description tokens"),
+            ],
+            "default": "fallback",
+        },
     }
 
     USER_SETTINGS = {
@@ -74,6 +98,16 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
             "description": "Default number of ranked candidates shown",
             "default": 10,
         },
+        "TOKEN_NAME_MODE": {
+            "name": "Name token strategy (user override)",
+            "description": "How part name/description tokens are used in auto-generated supplier queries.",
+            "choices": [
+                ("fallback", "Only when structured tokens are unavailable"),
+                ("always", "Always include name and description tokens"),
+                ("never", "Never include name and description tokens"),
+            ],
+            "default": "fallback",
+        },
     }
 
     def get_effective_setting(self, key, user=None, backup_value=None):
@@ -83,6 +117,55 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
             if user_value not in [None, ""]:
                 return user_value
         return self.get_setting(key, backup_value=backup_value)
+
+    def _normalize_param_name(self, value):
+        text = str(value or "").strip().lower()
+        return re.sub(r"[^a-z0-9]+", "", text)
+
+    def _get_token_parameter_filters(self):
+        configured = str(
+            self.get_setting("TOKEN_PARAMETER_NAMES", backup_value="") or ""
+        )
+        if configured.strip() == "":
+            return set()
+
+        tokens = re.split(r"[\n,;]+", configured)
+        return {
+            self._normalize_param_name(token)
+            for token in tokens
+            if self._normalize_param_name(token) != ""
+        }
+
+    def _setting_to_bool(self, value, default=False):
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+
+        text = str(value).strip().lower()
+        if text in ["1", "true", "yes", "on", "y"]:
+            return True
+        if text in ["0", "false", "no", "off", "n"]:
+            return False
+
+        return default
+
+    def _get_name_token_mode(self, user=None):
+        mode = (
+            str(
+                self.get_effective_setting(
+                    "TOKEN_NAME_MODE", user=user, backup_value="fallback"
+                )
+                or "fallback"
+            )
+            .strip()
+            .lower()
+        )
+
+        if mode not in ["fallback", "always", "never"]:
+            return "fallback"
+
+        return mode
 
     def _to_float(self, value, default=0.0):
         try:
@@ -203,56 +286,115 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
 
         return ""
 
-    def _tokenize_text(self, text):
+    def _tokenize_text(self, text, include_trace=False):
         if not text:
-            return []
+            return ([], []) if include_trace else []
 
         chunks = re.split(r"[^A-Za-z0-9%._+-]+", str(text))
         tokens = []
+        trace = []
+
+        def add_token(token_value, rule, fragment):
+            token_text = str(token_value or "").strip()
+            if len(token_text) < 2:
+                return
+
+            tokens.append(token_text)
+
+            if include_trace:
+                trace.append({
+                    "token": token_text,
+                    "rule": rule,
+                    "fragment": str(fragment or ""),
+                })
 
         for chunk in chunks:
             token = chunk.strip()
             if len(token) < 2:
                 continue
 
-            tokens.append(token)
+            add_token(token, "raw_chunk", token)
 
             for sub in re.split(r"[_\-/]+", token):
                 sub_token = sub.strip()
                 if len(sub_token) >= 2:
-                    tokens.append(sub_token)
+                    add_token(sub_token, "split_subtoken", token)
 
             lower = token.lower()
             if re.match(r"^\d+(\.\d+)?p$", lower):
                 numeric = lower[:-1]
-                tokens.extend([f"{numeric}pf", f"{numeric}pF"])
+                add_token(f"{numeric}pf", "shorthand_p_to_pf", token)
+                add_token(f"{numeric}pF", "shorthand_p_to_pF", token)
             elif re.match(r"^\d+(\.\d+)?n$", lower):
                 numeric = lower[:-1]
-                tokens.extend([f"{numeric}nf", f"{numeric}nF"])
+                add_token(f"{numeric}nf", "shorthand_n_to_nf", token)
+                add_token(f"{numeric}nF", "shorthand_n_to_nF", token)
             elif re.match(r"^\d+(\.\d+)?u$", lower):
                 numeric = lower[:-1]
-                tokens.extend([f"{numeric}uf", f"{numeric}uF"])
+                add_token(f"{numeric}uf", "shorthand_u_to_uf", token)
+                add_token(f"{numeric}uF", "shorthand_u_to_uF", token)
             elif re.match(r"^\d+(\.\d+)?k$", lower):
                 numeric = lower[:-1]
-                tokens.extend([f"{numeric}kohm", f"{numeric}kOhm"])
+                add_token(f"{numeric}kohm", "shorthand_k_to_kohm", token)
+                add_token(f"{numeric}kOhm", "shorthand_k_to_kOhm", token)
 
             cap_normalized = self._normalize_capacitance_token(token)
             if cap_normalized:
-                tokens.append(cap_normalized)
+                add_token(cap_normalized, "normalized_capacitance", token)
 
             res_normalized = self._normalize_resistance_token(token)
             if res_normalized:
-                tokens.append(res_normalized)
+                add_token(res_normalized, "normalized_resistance", token)
 
             cap_code = self._decode_eia_cap_code(token)
             if cap_code:
-                tokens.append(cap_code)
+                add_token(cap_code, "decoded_eia_cap_code", token)
+
+        if include_trace:
+            return tokens, trace
 
         return tokens
 
-    def _extract_part_tokens(self, part):
+    def _extract_part_tokens(self, part, user=None):
         tokens = []
         sources = []
+        token_origins = {}
+        parameter_filters = self._get_token_parameter_filters()
+
+        category_names = []
+        seen_categories = set()
+        include_categories = self._setting_to_bool(
+            self.get_setting("TOKEN_INCLUDE_CATEGORY_NAMES", backup_value=True),
+            default=True,
+        )
+
+        if include_categories:
+            category = getattr(part, "category", None)
+
+            # Include the direct category and its parent chain as token sources.
+            while category is not None:
+                category_pk = getattr(category, "pk", id(category))
+                if category_pk in seen_categories:
+                    break
+                seen_categories.add(category_pk)
+
+                category_name = str(getattr(category, "name", "") or "").strip()
+                if category_name:
+                    category_names.append(category_name)
+
+                category = getattr(category, "parent", None)
+
+        def register_origins(base_context, token_trace):
+            for origin in token_trace:
+                token_key = str(origin.get("token") or "").lower()
+                if token_key == "":
+                    continue
+
+                token_origins.setdefault(token_key, []).append({
+                    **base_context,
+                    "rule": origin.get("rule", ""),
+                    "fragment": origin.get("fragment", ""),
+                })
 
         base_fields = [
             ("name", getattr(part, "name", "")),
@@ -270,14 +412,44 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
                 base_fields.append(("manufacturer_part", mpn))
 
         for source_name, source_value in base_fields:
-            source_tokens = self._tokenize_text(source_value)
+            source_tokens, source_trace = self._tokenize_text(
+                source_value, include_trace=True
+            )
             if source_tokens:
                 tokens.extend(source_tokens)
                 sources.append({
                     "source": source_name,
                     "value": str(source_value),
                     "tokens": source_tokens,
+                    "token_trace": source_trace,
                 })
+                register_origins(
+                    {
+                        "source": source_name,
+                        "value": str(source_value),
+                    },
+                    source_trace,
+                )
+
+        for category_name in category_names:
+            category_tokens, category_trace = self._tokenize_text(
+                category_name, include_trace=True
+            )
+            if category_tokens:
+                tokens.extend(category_tokens)
+                sources.append({
+                    "source": "category",
+                    "value": category_name,
+                    "tokens": category_tokens,
+                    "token_trace": category_trace,
+                })
+                register_origins(
+                    {
+                        "source": "category",
+                        "value": category_name,
+                    },
+                    category_trace,
+                )
 
         param_sets = []
         if hasattr(part, "parameters"):
@@ -297,8 +469,38 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
                     getattr(template, "name", "") if template is not None else ""
                 )
                 param_data = getattr(param, "data", "")
-                joined = f"{template_name} {param_data}".strip()
-                param_tokens = self._tokenize_text(joined)
+                template_unit = str(
+                    getattr(template, "units", "") if template is not None else ""
+                ).strip()
+
+                if parameter_filters:
+                    normalized_name = self._normalize_param_name(template_name)
+                    if normalized_name not in parameter_filters:
+                        continue
+
+                param_value_text = str(param_data or "").strip()
+                param_tokens, param_trace = self._tokenize_text(
+                    param_value_text, include_trace=True
+                )
+
+                numeric_value = param_value_text
+                if template_unit and re.match(r"^[-+]?\d+(\.\d+)?$", numeric_value):
+                    for unitized_text in [
+                        f"{numeric_value}{template_unit}",
+                        f"{numeric_value} {template_unit}",
+                    ]:
+                        extra_tokens, extra_trace = self._tokenize_text(
+                            unitized_text, include_trace=True
+                        )
+                        for trace_entry in extra_trace:
+                            trace_entry["rule"] = (
+                                f"unitized_{trace_entry.get('rule', 'raw_chunk')}"
+                            )
+                            trace_entry["fragment"] = (
+                                f"{trace_entry.get('fragment', '')} | template_unit={template_unit}"
+                            )
+                        param_tokens.extend(extra_tokens)
+                        param_trace.extend(extra_trace)
 
                 if param_tokens:
                     tokens.extend(param_tokens)
@@ -307,7 +509,16 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
                         "name": str(template_name),
                         "value": str(param_data),
                         "tokens": param_tokens,
+                        "token_trace": param_trace,
                     })
+                    register_origins(
+                        {
+                            "source": "parameter",
+                            "name": str(template_name),
+                            "value": str(param_data),
+                        },
+                        param_trace,
+                    )
 
         deduped = []
         seen = set()
@@ -318,9 +529,14 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
             seen.add(key)
             deduped.append(token)
 
+        token_attribution = {
+            token: token_origins.get(token.lower(), []) for token in deduped
+        }
+
         return {
             "tokens": deduped,
             "sources": sources,
+            "token_attribution": token_attribution,
         }
 
     def _extract_search_hints(self, part, token_data):
@@ -424,31 +640,9 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
 
         return hints
 
-    def _build_semantic_query(self, token_data, hints):
-        query_tokens = []
-
-        if hints.get("component_type"):
-            query_tokens.append(hints["component_type"])
-
-        for key in [
-            "capacitance",
-            "resistance",
-            "inductance",
-            "package",
-            "tolerance",
-            "voltage",
-        ]:
-            value = str(hints.get(key) or "").strip()
-            if value:
-                query_tokens.append(value)
-
-        for source in token_data.get("sources", []):
-            if source.get("source") == "manufacturer_part":
-                for token in source.get("tokens", []):
-                    query_tokens.append(str(token))
-
-        for token in token_data.get("tokens", []):
-            query_tokens.append(str(token))
+    def _build_semantic_query(self, token_data, hints, user=None):
+        plan = self._build_query_plan(token_data, hints, user=user)
+        query_tokens = plan.get("query_tokens", [])
 
         deduped = []
         seen = set()
@@ -466,10 +660,88 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
 
         return " ".join(deduped[:10])
 
-    def _default_part_query(self, part):
-        token_data = self._extract_part_tokens(part)
+    def _build_query_plan(self, token_data, hints, user=None):
+        query_tokens = []
+
+        def source_tokens(source_name):
+            values = []
+            for source in token_data.get("sources", []):
+                if source.get("source") != source_name:
+                    continue
+                for token in source.get("tokens", []):
+                    values.append(str(token))
+            return values
+
+        if hints.get("component_type"):
+            query_tokens.append(hints["component_type"])
+
+        for key in [
+            "capacitance",
+            "resistance",
+            "inductance",
+            "package",
+            "tolerance",
+            "voltage",
+        ]:
+            value = str(hints.get(key) or "").strip()
+            if value:
+                query_tokens.append(value)
+
+        for source_name in ["manufacturer_part", "IPN", "SKU", "parameter", "category"]:
+            query_tokens.extend(source_tokens(source_name))
+
+        has_structured_tokens = any(
+            source.get("source")
+            in [
+                "manufacturer_part",
+                "IPN",
+                "SKU",
+                "parameter",
+                "category",
+            ]
+            and bool(source.get("tokens"))
+            for source in token_data.get("sources", [])
+        )
+
+        name_mode = self._get_name_token_mode(user=user)
+        include_name_tokens = name_mode == "always" or (
+            name_mode == "fallback" and not has_structured_tokens
+        )
+
+        if include_name_tokens:
+            for source_name in ["name", "description"]:
+                query_tokens.extend(source_tokens(source_name))
+
+        if not query_tokens:
+            for token in token_data.get("tokens", []):
+                query_tokens.append(str(token))
+
+        structured_source_names = [
+            "manufacturer_part",
+            "IPN",
+            "SKU",
+            "parameter",
+            "category",
+        ]
+        named_source_names = ["name", "description"]
+
+        source_token_map = {
+            source_name: source_tokens(source_name)
+            for source_name in structured_source_names + named_source_names
+        }
+
+        return {
+            "name_mode": name_mode,
+            "has_structured_tokens": has_structured_tokens,
+            "include_name_tokens": include_name_tokens,
+            "source_token_map": source_token_map,
+            "query_tokens": query_tokens,
+        }
+
+    def _default_part_query(self, part, user=None):
+        token_data = self._extract_part_tokens(part, user=user)
         hints = self._extract_search_hints(part, token_data)
-        semantic_query = self._build_semantic_query(token_data, hints)
+        semantic_query = self._build_semantic_query(token_data, hints, user=user)
         if semantic_query:
             return semantic_query
 
@@ -478,7 +750,196 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
             return " ".join(tokens[:6])
         return ""
 
-    def _rank_candidates(self, query, candidates, user=None, top_n=10):
+    def _build_initial_search_query(self, part, user=None):
+        token_data = self._extract_part_tokens(part, user=user)
+        semantic_hints = self._extract_search_hints(part, token_data)
+        query = self._build_semantic_query(token_data, semantic_hints, user=user)
+
+        if query == "":
+            query = self._default_part_query(part, user=user)
+
+        return query
+
+    def _parse_quantity_value(self, raw_value, kind, default_unit=None):
+        text = str(raw_value or "").strip().lower().replace("μ", "u")
+        if text == "":
+            return None
+
+        target_unit = {
+            "voltage": "v",
+            "current": "a",
+            "power": "w",
+        }.get(kind)
+        if target_unit is None:
+            return None
+
+        scales = {
+            "": 1.0,
+            "k": 1000.0,
+            "m": 0.001,
+            "u": 0.000001,
+            "n": 0.000000001,
+        }
+
+        values = []
+        pattern = re.compile(r"([-+]?\d+(?:\.\d+)?)\s*([kmun]?)\s*([vaw])\b")
+        for match in pattern.finditer(text):
+            unit = match.group(3)
+            if unit != target_unit:
+                continue
+
+            try:
+                parsed_value = float(match.group(1)) * scales.get(match.group(2), 1.0)
+            except Exception:
+                continue
+
+            values.append(parsed_value)
+
+        if values:
+            return max(values)
+
+        # Fallback for plain numeric values where unit is supplied by template.
+        if default_unit:
+            unit_text = str(default_unit or "").strip().lower().replace("μ", "u")
+            unit_match = re.match(r"^([kmun]?)([vaw])$", unit_text)
+            number_match = re.match(r"^[-+]?\d+(?:\.\d+)?$", text)
+            if unit_match and number_match and unit_match.group(2) == target_unit:
+                try:
+                    return float(text) * scales.get(unit_match.group(1), 1.0)
+                except Exception:
+                    return None
+
+        return None
+
+    def _extract_numeric_constraints(self, part):
+        constraints = {}
+
+        param_sets = []
+        if hasattr(part, "parameters"):
+            param_sets.append(getattr(part, "parameters"))
+        if hasattr(part, "parameters_list"):
+            param_sets.append(getattr(part, "parameters_list"))
+
+        for param_set in param_sets:
+            try:
+                params = param_set.all()
+            except Exception:
+                continue
+
+            for param in params:
+                template = getattr(param, "template", None)
+                name = str(
+                    getattr(template, "name", "") if template is not None else ""
+                )
+                unit = str(
+                    getattr(template, "units", "") if template is not None else ""
+                )
+                value = getattr(param, "data", "")
+
+                name_lower = name.lower()
+                kind = None
+                operator = None
+
+                if "voltage" in name_lower:
+                    kind = "voltage"
+                    operator = "min"
+                elif "current" in name_lower:
+                    kind = "current"
+                    if any(token in name_lower for token in ["consum", "draw", "load"]):
+                        operator = "max"
+                    else:
+                        operator = "min"
+
+                if kind is None or operator is None:
+                    continue
+
+                parsed_value = self._parse_quantity_value(
+                    value, kind=kind, default_unit=unit
+                )
+                if parsed_value is None:
+                    continue
+
+                key = (kind, operator)
+                existing = constraints.get(key)
+
+                if existing is None:
+                    constraints[key] = {
+                        "kind": kind,
+                        "op": operator,
+                        "value": parsed_value,
+                        "source": name,
+                        "raw_value": str(value),
+                        "unit": unit,
+                    }
+                    continue
+
+                # Keep stricter bounds across multiple parameters.
+                if operator == "min" and parsed_value > existing["value"]:
+                    constraints[key] = {
+                        "kind": kind,
+                        "op": operator,
+                        "value": parsed_value,
+                        "source": name,
+                        "raw_value": str(value),
+                        "unit": unit,
+                    }
+                elif operator == "max" and parsed_value < existing["value"]:
+                    constraints[key] = {
+                        "kind": kind,
+                        "op": operator,
+                        "value": parsed_value,
+                        "source": name,
+                        "raw_value": str(value),
+                        "unit": unit,
+                    }
+
+        return list(constraints.values())
+
+    def _extract_candidate_constraint_value(self, candidate, constraint):
+        kind = constraint.get("kind")
+        if kind not in ["voltage", "current", "power"]:
+            return None
+
+        fields = []
+        spec_attributes = candidate.get("spec_attributes") or {}
+        if isinstance(spec_attributes, dict):
+            if kind == "voltage":
+                fields.extend([
+                    value
+                    for name, value in spec_attributes.items()
+                    if "voltage" in str(name).lower()
+                ])
+            elif kind == "current":
+                fields.extend([
+                    value
+                    for name, value in spec_attributes.items()
+                    if "current" in str(name).lower()
+                ])
+            elif kind == "power":
+                fields.extend([
+                    value
+                    for name, value in spec_attributes.items()
+                    if "power" in str(name).lower()
+                ])
+
+        fields.append(candidate.get("description") or "")
+
+        values = []
+        for field in fields:
+            parsed = self._parse_quantity_value(field, kind=kind)
+            if parsed is not None:
+                values.append(parsed)
+
+        if not values:
+            return None
+
+        if constraint.get("op") == "min":
+            return max(values)
+        return min(values)
+
+    def _rank_candidates(
+        self, query, candidates, user=None, top_n=10, constraints=None
+    ):
         if not candidates:
             return []
 
@@ -549,18 +1010,53 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
                     0.45 * match_score + 0.35 * availability_score + 0.20 * price_score
                 )
 
+            constraint_matches = 0
+            constraint_violations = 0
+            constraint_unknown = 0
+
+            for constraint in constraints or []:
+                candidate_value = self._extract_candidate_constraint_value(
+                    candidate, constraint
+                )
+                if candidate_value is None:
+                    constraint_unknown += 1
+                    continue
+
+                required = float(constraint.get("value", 0.0))
+                op = constraint.get("op")
+                if op == "min":
+                    if candidate_value >= required:
+                        constraint_matches += 1
+                    else:
+                        constraint_violations += 1
+                elif op == "max":
+                    if candidate_value <= required:
+                        constraint_matches += 1
+                    else:
+                        constraint_violations += 1
+
+            # Penalize likely violations while still allowing manual review.
+            final_score -= constraint_violations * 20.0
+
             reasons = [
                 f"match={round(match_score, 1)}",
                 f"availability={available_quantity}",
             ]
             if unit_price > 0:
                 reasons.append(f"price={unit_price}")
+            if constraints:
+                reasons.append(f"constraint_matches={constraint_matches}")
+                reasons.append(f"constraint_violations={constraint_violations}")
+                reasons.append(f"constraint_unknown={constraint_unknown}")
 
             enriched = dict(candidate)
             enriched["available_quantity"] = available_quantity
             enriched["unit_price"] = unit_price
             enriched["score"] = round(final_score, 2)
             enriched["reasons"] = reasons
+            enriched["constraint_matches"] = constraint_matches
+            enriched["constraint_violations"] = constraint_violations
+            enriched["constraint_unknown"] = constraint_unknown
             ranked.append(enriched)
 
         ranked.sort(
@@ -739,6 +1235,20 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
 
         return suppliers
 
+    def _get_search_ready_suppliers(self, user=None):
+        """Return registered suppliers with valid search credentials."""
+        ready = []
+
+        for supplier in self._get_registered_suppliers():
+            adapter = self._get_supplier_definition(supplier.get("key"))
+            if adapter is None:
+                continue
+
+            if adapter.has_search_credentials(user=user):
+                ready.append(supplier)
+
+        return ready
+
     def _get_supplier_max_candidates(self, supplier_pk, default=40):
         registration = self._get_supplier_registration(supplier_pk)
         if registration is None:
@@ -750,12 +1260,20 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
 
         return adapter.get_max_candidates(default=default)
 
-    def get_candidates(self, supplier, query, max_results=25, user=None):
+    def get_candidates(
+        self, supplier, query, max_results=25, user=None, min_qty=None, max_qty=None
+    ):
         registration = self._get_supplier_registration(supplier)
         if registration is not None:
             adapter = self._get_supplier_definition(registration.get("key"))
             if adapter is not None:
-                return adapter.get_candidates(query, max_results=max_results, user=user)
+                return adapter.get_candidates(
+                    query,
+                    max_results=max_results,
+                    user=user,
+                    min_qty=min_qty,
+                    max_qty=max_qty,
+                )
 
         return {
             "error_status": "Unknown supplier for candidate search",
@@ -774,57 +1292,89 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
                 self.apply_candidates,
                 name="apply-candidates",
             ),
+            re_path(
+                r"tokendebug(?:\.(?P<format>json))?$",
+                self.token_debug,
+                name="token-debug",
+            ),
         ]
 
-    def get_ui_panels(self, request, context, **kwargs):
-        panels = []
-        context = context or {}
+    def token_debug(self, request):
+        """Return token attribution debug data for a part.
 
-        if context.get("target_model") != "part":
-            return panels
-
-        target_id = context.get("target_id")
-        if target_id is None:
-            return panels
-
+        Accepts part PK via query string (?pk=123) or JSON body {"pk": 123}.
+        """
         try:
-            part = Part.objects.get(pk=target_id)
-        except (Part.DoesNotExist, ValueError, TypeError):
-            return panels
+            data = {}
 
-        has_permission = (
-            check_user_role(request.user, "part", "change")
-            or check_user_role(request.user, "part", "delete")
-            or check_user_role(request.user, "part", "add")
-        )
-        if not has_permission or not part.purchaseable:
-            return panels
+            if request.method.upper() == "GET":
+                data = request.GET or {}
+            else:
+                data = self._decode_json_body(request)
 
-        suppliers = self._get_registered_suppliers()
-        if not suppliers:
-            return panels
+            try:
+                part_pk = int(data.get("pk"))
+            except Exception:
+                return JsonResponse({"message": "Invalid part id"}, status=400)
 
-        panels.append({
-            "key": "supplierscout-part-panel",
-            "title": "Supplier Part Matching",
-            "icon": "ti:search",
-            "source": self.plugin_static_file("Panel.js:renderSupplierScoutPanel"),
-            "context": {
-                "search_url": f"/{self.base_url}searchcandidates",
-                "apply_url": f"/{self.base_url}applycandidates",
+            part = Part.objects.filter(id=part_pk).first()
+            if not part:
+                return JsonResponse({"message": "Part not found"}, status=404)
+
+            token_data = self._extract_part_tokens(part, user=request.user)
+            semantic_hints = self._extract_search_hints(part, token_data)
+            query_plan = self._build_query_plan(
+                token_data, semantic_hints, user=request.user
+            )
+            query = self._build_initial_search_query(part, user=request.user)
+
+            payload = {
+                "message": "OK",
                 "part_pk": part.pk,
-                "show_score": bool(getattr(settings, "DEBUG", False)),
-                "top_n": int(
-                    self.get_effective_setting(
-                        "TOP_N_CANDIDATES", user=request.user, backup_value=10
-                    )
-                    or 10
-                ),
-                "suppliers": suppliers,
-            },
-        })
+                "query": query,
+                "debug": {
+                    "tokens": token_data.get("tokens", []),
+                    "token_sources": token_data.get("sources", []),
+                    "token_attribution": token_data.get("token_attribution", {}),
+                    "semantic_hints": semantic_hints,
+                    "query_debug": {
+                        "name_mode": query_plan.get("name_mode"),
+                        "has_structured_tokens": query_plan.get(
+                            "has_structured_tokens", False
+                        ),
+                        "include_name_tokens": query_plan.get(
+                            "include_name_tokens", False
+                        ),
+                        "source_token_map": query_plan.get("source_token_map", {}),
+                        "final_query_tokens": query_plan.get("query_tokens", []),
+                    },
+                },
+            }
 
-        return panels
+            if getattr(settings, "DEBUG", False):
+                logger.debug(
+                    "SupplierScout token debug for part %s: %s",
+                    part.pk,
+                    json.dumps(payload.get("debug", {}), ensure_ascii=True),
+                )
+
+            return JsonResponse(payload)
+        except Exception as e:
+            import traceback
+
+            return JsonResponse(
+                {
+                    "message": f"Exception during token debug: {str(e)}",
+                    "debug": {
+                        "error_type": type(e).__name__,
+                        "error_traceback": traceback.format_exc(),
+                    },
+                },
+                status=500,
+            )
+
+    def get_ui_panels(self, request, context, **kwargs):
+        return []
 
     def get_ui_primary_actions(self, request, context, **kwargs):
         actions = []
@@ -861,9 +1411,8 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
         if not has_permission:
             return actions
 
-        suppliers = self._get_registered_suppliers()
-        if not suppliers:
-            return actions
+        suppliers = self._get_search_ready_suppliers(user=request.user)
+        action_enabled = len(suppliers) > 0
 
         actions.append({
             "key": "supplierscout-part-match-action",
@@ -874,6 +1423,9 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
                 "title": "Supplier Part Matching",
                 "search_url": f"/{self.base_url}searchcandidates",
                 "apply_url": f"/{self.base_url}applycandidates",
+                "default_query": self._build_initial_search_query(
+                    part, user=request.user
+                ),
                 "part_pk": part.pk,
                 "show_score": bool(getattr(settings, "DEBUG", False)),
                 "top_n": int(
@@ -885,7 +1437,11 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
                 "suppliers": suppliers,
             },
             "options": {
-                "color": "blue",
+                "color": "blue" if action_enabled else "gray",
+                "disabled": not action_enabled,
+                "tooltip": "Configure at least one supplier API key in plugin settings"
+                if not action_enabled
+                else "",
             },
         })
 
@@ -922,14 +1478,33 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
 
             max_candidates = self._get_supplier_max_candidates(supplier_pk, default=40)
 
+            # Extract optional min/max quantity overrides from request
+            try:
+                min_qty = int(data.get("min_qty")) if data.get("min_qty") else None
+            except (ValueError, TypeError):
+                min_qty = None
+
+            try:
+                max_qty = int(data.get("max_qty")) if data.get("max_qty") else None
+            except (ValueError, TypeError):
+                max_qty = None
+
             query = str(data.get("query") or "").strip()
-            token_data = self._extract_part_tokens(part)
+            token_data = self._extract_part_tokens(part, user=request.user)
             semantic_hints = self._extract_search_hints(part, token_data)
+            numeric_constraints = self._extract_numeric_constraints(part)
+
+            if getattr(settings, "DEBUG", False):
+                logger.debug(
+                    "SupplierScout token attribution for part %s: %s",
+                    part.pk,
+                    json.dumps(
+                        token_data.get("token_attribution", {}), ensure_ascii=True
+                    ),
+                )
 
             if query == "":
-                query = self._build_semantic_query(token_data, semantic_hints)
-            if query == "":
-                query = self._default_part_query(part)
+                query = self._build_initial_search_query(part, user=request.user)
 
             if query == "":
                 return JsonResponse({
@@ -937,7 +1512,9 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
                     "debug": {
                         "tokens": token_data.get("tokens", []),
                         "token_sources": token_data.get("sources", []),
+                        "token_attribution": token_data.get("token_attribution", {}),
                         "semantic_hints": semantic_hints,
+                        "numeric_constraints": numeric_constraints,
                     },
                 })
 
@@ -946,6 +1523,8 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
                 query=query,
                 max_results=max_candidates,
                 user=request.user,
+                min_qty=min_qty,
+                max_qty=max_qty,
             )
 
             registration = self._get_supplier_registration(supplier_pk)
@@ -961,7 +1540,9 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
                     "debug": {
                         "tokens": token_data.get("tokens", []),
                         "token_sources": token_data.get("sources", []),
+                        "token_attribution": token_data.get("token_attribution", {}),
                         "semantic_hints": semantic_hints,
+                        "numeric_constraints": numeric_constraints,
                         "query": query,
                         "supplier_response": response.get("debug", {}),
                     },
@@ -975,6 +1556,7 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
                 ],
                 user=request.user,
                 top_n=top_n,
+                constraints=numeric_constraints,
             )
 
             existing_supplier_parts = SupplierPart.objects.filter(
@@ -1008,7 +1590,9 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
                 "debug": {
                     "tokens": token_data.get("tokens", []),
                     "token_sources": token_data.get("sources", []),
+                    "token_attribution": token_data.get("token_attribution", {}),
                     "semantic_hints": semantic_hints,
+                    "numeric_constraints": numeric_constraints,
                     "query": query,
                 },
             })

@@ -75,6 +75,10 @@ class BaseSupplierAdapter:
     def get_candidates(self, query, max_results=25, user=None):
         raise NotImplementedError()
 
+    def has_search_credentials(self, user=None):
+        """Return whether this supplier is configured for search requests."""
+        return True
+
     def normalize_price_breaks(self, price_breaks):
         normalized = []
 

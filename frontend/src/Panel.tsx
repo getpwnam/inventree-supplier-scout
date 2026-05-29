@@ -15,6 +15,7 @@ import {
   Stack,
   Table,
   Text,
+  Textarea,
   TextInput,
   Title
 } from '@mantine/core';
@@ -44,6 +45,7 @@ type MatcherContext = {
   title?: string;
   search_url: string;
   apply_url: string;
+  default_query?: string;
   part_pk: number;
   suppliers: Supplier[];
   top_n?: number;
@@ -69,15 +71,17 @@ function SupplierScoutMatcher({
   onClose?: () => void;
 }) {
   const suppliers = serverContext.suppliers || [];
-  const [query, setQuery] = useState<string>('');
+  const [query, setQuery] = useState<string>(serverContext.default_query || '');
   const [supplier, setSupplier] = useState<string>(
     suppliers[0] ? String(suppliers[0].pk) : ''
   );
+  const [minQty, setMinQty] = useState<string>('');
+  const [maxQty, setMaxQty] = useState<string>('');
+  const [showTokens, setShowTokens] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [isError, setIsError] = useState<boolean>(false);
   const [searching, setSearching] = useState<boolean>(false);
   const [applying, setApplying] = useState<boolean>(false);
-  const [debugData, setDebugData] = useState<Record<string, any> | null>(null);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
 
@@ -102,14 +106,15 @@ function SupplierScoutMatcher({
     setSearching(true);
     setCandidates([]);
     setSelectedSkus(new Set());
-    setDebugData(null);
 
     try {
       const payload = {
         pk: serverContext.part_pk,
         supplier: Number(supplier),
         query: query.trim(),
-        top_n: serverContext.top_n || 10
+        top_n: serverContext.top_n || 10,
+        ...(minQty && { min_qty: Number(minQty) }),
+        ...(maxQty && { max_qty: Number(maxQty) })
       };
 
       const response = await context.api.post(
@@ -117,8 +122,6 @@ function SupplierScoutMatcher({
         payload
       );
       const data = response?.data || {};
-
-      setDebugData(data.debug || null);
 
       const foundCandidates: Candidate[] = data.candidates || [];
       setCandidates(foundCandidates);
@@ -230,15 +233,57 @@ function SupplierScoutMatcher({
           value={supplier}
           onChange={(event) => setSupplier(event.currentTarget.value)}
         />
-        <TextInput
-          label='Query (optional)'
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-          placeholder='Search query or supplier part number (optional)'
-        />
         <Button onClick={searchMatches} loading={searching}>
           Find Matches
         </Button>
+      </Group>
+
+      {showTokens && (
+        <Paper withBorder p='md' radius='md' mb='md'>
+          <Stack gap='xs'>
+            <Text size='sm' fw={600}>
+              Search Query Tokens
+            </Text>
+            <Text size='xs' c='dimmed'>
+              Edit the search query below. Leave blank to auto-generate from
+              part data.
+            </Text>
+            <Textarea
+              label='Search Query'
+              value={query}
+              onChange={(event) => setQuery(event.currentTarget.value)}
+              placeholder='Enter search terms separated by spaces, or leave blank for auto-generated query'
+              minRows={3}
+              maxRows={6}
+            />
+          </Stack>
+        </Paper>
+      )}
+
+      <Button
+        variant='subtle'
+        size='xs'
+        onClick={() => setShowTokens(!showTokens)}
+        mb='sm'
+      >
+        {showTokens ? 'Hide' : 'Show'} Search Query
+      </Button>
+
+      <Group grow>
+        <TextInput
+          label='Min Quantity (optional)'
+          value={minQty}
+          onChange={(event) => setMinQty(event.currentTarget.value)}
+          placeholder='Minimum order quantity'
+          type='number'
+        />
+        <TextInput
+          label='Max Quantity (optional)'
+          value={maxQty}
+          onChange={(event) => setMaxQty(event.currentTarget.value)}
+          placeholder='Maximum preferred quantity'
+          type='number'
+        />
       </Group>
 
       <Paper withBorder p='sm' radius='md'>
@@ -323,14 +368,6 @@ function SupplierScoutMatcher({
           </ScrollArea>
         )}
       </Paper>
-
-      {debugData && (
-        <Alert color='gray' title='Debug'>
-          <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>
-            {JSON.stringify(debugData, null, 2)}
-          </pre>
-        </Alert>
-      )}
 
       <Group justify='flex-end'>
         {onClose && (

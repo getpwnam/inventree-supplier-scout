@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       COVERAGE_MIN: "45"
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -37,15 +38,15 @@ jobs:
           coverage report -m --fail-under=${COVERAGE_MIN}
           coverage xml
       - name: Upload Coverage to Codecov
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        if: ${{ env.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           files: ./coverage.xml
           fail_ci_if_error: false
           verbose: true
       - name: Skip Codecov Upload (No Token)
-        if: ${{ secrets.CODECOV_TOKEN == '' }}
+        if: ${{ env.CODECOV_TOKEN == '' }}
         run: |
           echo "CODECOV_TOKEN is not configured; skipping Codecov upload."
           echo "Coverage gate is still enforced via coverage report --fail-under=${COVERAGE_MIN}."

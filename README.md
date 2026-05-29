@@ -42,6 +42,7 @@ coverage xml
 ```
 
 Coverage is uploaded in CI via the GitHub Actions workflow at `.github/workflows/ci.yaml`.
+If `CODECOV_TOKEN` is not configured, CI will skip Codecov upload and still enforce the local coverage threshold.
 
 ### Run CI Checks Locally (Pipeline Equivalent)
 
@@ -72,3 +73,8 @@ npm run lint
 2. Open the repository `Actions` tab and select `CI Checks`.
 3. Review logs for the `ci` and `frontend` jobs.
 4. Check Codecov status/comment on the pull request after coverage upload.
+
+### Codecov Token (Optional)
+
+- For private or pre-release repositories, set `CODECOV_TOKEN` as a GitHub Actions repository secret to enable Codecov uploads.
+- If no token is configured, CI still runs tests and enforces coverage with `--fail-under`.

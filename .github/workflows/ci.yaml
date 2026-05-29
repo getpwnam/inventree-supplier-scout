@@ -5,6 +5,9 @@ name: CI Checks
 
 on: ["push", "pull_request"]
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   ci:
     runs-on: ubuntu-latest
@@ -12,9 +15,9 @@ jobs:
       COVERAGE_MIN: "45"
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
           python-version: 3.11
       - name: Install Deps
@@ -31,12 +34,18 @@ jobs:
           coverage report -m --fail-under=${COVERAGE_MIN}
           coverage xml
       - name: Upload Coverage to Codecov
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
           fail_ci_if_error: false
           verbose: true
+      - name: Skip Codecov Upload (No Token)
+        if: ${{ secrets.CODECOV_TOKEN == '' }}
+        run: |
+          echo "CODECOV_TOKEN is not configured; skipping Codecov upload."
+          echo "Coverage gate is still enforced via coverage report --fail-under=${COVERAGE_MIN}."
       - name: Build Plugin
         run: |
           python -m build
@@ -45,11 +54,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Install Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
       - name: Build Frontend
         run: |
           cd frontend

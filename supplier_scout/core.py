@@ -18,6 +18,7 @@ from plugin import InvenTreePlugin
 from plugin.mixins import SettingsMixin
 from plugin.mixins import UrlsMixin
 from plugin.mixins import UserInterfaceMixin
+from plugin.mixins import supplier
 from users.permissions import check_user_role
 
 from . import PLUGIN_VERSION
@@ -117,6 +118,332 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
             if user_value not in [None, ""]:
                 return user_value
         return self.get_setting(key, backup_value=backup_value)
+
+    # SupplierMixin-compatible internals ---------------------------------
+    # These methods mirror the SupplierMixin contract so migration can happen
+    # later without changing core data extraction / import behavior.
+
+    def _resolve_supplier_registration_from_slug(self, supplier_slug):
+        slug_text = str(supplier_slug or "").strip().lower()
+        if slug_text == "":
+            return None
+
+        if ":" in slug_text:
+            supplier_key, supplier_pk = slug_text.split(":", 1)
+            supplier_key = supplier_key.strip()
+            try:
+                supplier_pk = int(supplier_pk)
+            except Exception:
+                return None
+
+            for registration in self._get_registered_suppliers():
+                if (
+                    str(registration.get("key") or "").strip().lower() == supplier_key
+                    and int(registration.get("pk") or 0) == supplier_pk
+                ):
+                    return registration
+            return None
+
+        matches = [
+            registration
+            for registration in self._get_registered_suppliers()
+            if str(registration.get("key") or "").strip().lower() == slug_text
+        ]
+
+        if len(matches) == 1:
+            return matches[0]
+
+        return None
+
+    def _normalize_import_payload(self, data):
+        payload = dict(data or {})
+        if "candidate" in payload and isinstance(payload.get("candidate"), dict):
+            candidate = dict(payload.get("candidate") or {})
+            for key in ["_supplier_key", "_supplier_pk"]:
+                if key in payload and key not in candidate:
+                    candidate[key] = payload.get(key)
+            return candidate
+        return payload
+
+    def get_suppliers(self):
+        suppliers = []
+        for registration in self._get_registered_suppliers():
+            adapter = self._get_supplier_definition(registration.get("key"))
+            if adapter is None:
+                continue
+
+            if not adapter.has_search_credentials(user=None):
+                continue
+
+            suppliers.append(
+                supplier.Supplier(
+                    slug=f"{registration.get('key')}:{registration.get('pk')}",
+                    name=str(registration.get("name") or registration.get("key") or ""),
+                )
+            )
+
+        return suppliers
+
+    def get_search_results(self, supplier_slug, term):
+        registration = self._resolve_supplier_registration_from_slug(supplier_slug)
+        if registration is None:
+            return []
+
+        supplier_pk = int(registration.get("pk") or 0)
+        if supplier_pk <= 0:
+            return []
+
+        adapter = self._get_supplier_definition(registration.get("key"))
+        if adapter is None:
+            return []
+
+        max_candidates = self._get_supplier_max_candidates(supplier_pk, default=40)
+        response = self.get_candidates(
+            supplier=supplier_pk,
+            query=str(term or "").strip(),
+            max_results=max_candidates,
+            user=None,
+        )
+
+        if response.get("error_status") != "OK":
+            return []
+
+        results = []
+        search_term = str(term or "").strip().lower()
+        for candidate_raw in response.get("candidates", []):
+            candidate = adapter.normalize_candidate(candidate_raw)
+            sku = adapter.get_candidate_supplier_part_number(candidate)
+            mpn = adapter.get_candidate_manufacturer_part_number(candidate)
+
+            if sku == "":
+                continue
+
+            supplier_part = (
+                SupplierPart.objects.filter(
+                    supplier_id=supplier_pk,
+                    SKU__iexact=sku,
+                )
+                .select_related("part")
+                .first()
+            )
+
+            unit_price = candidate.get("unit_price")
+            unit_price_text = ""
+            if unit_price not in [None, ""]:
+                unit_price_text = f"{self._to_float(unit_price, default=0.0):g}"
+
+            currency = ""
+            breaks = candidate.get("price_breaks") or []
+            if breaks:
+                currency = str(breaks[0].get("currency") or "").strip()
+            if unit_price_text and currency:
+                unit_price_text = f"{unit_price_text} {currency}"
+
+            exact = False
+            if search_term:
+                exact = search_term in [sku.lower(), mpn.lower()]
+
+            results.append(
+                supplier.SearchResult(
+                    sku=sku,
+                    id=sku,
+                    name=mpn or sku,
+                    description=str(candidate.get("description") or "").strip() or None,
+                    exact=exact,
+                    price=unit_price_text or None,
+                    link=str(candidate.get("supplier_link") or "").strip() or None,
+                    image_url=str(candidate.get("image_url") or "").strip() or None,
+                    existing_part=getattr(supplier_part, "part", None),
+                )
+            )
+
+        return results
+
+    def get_import_data(self, supplier_slug, part_id):
+        registration = self._resolve_supplier_registration_from_slug(supplier_slug)
+        if registration is None:
+            raise supplier.PartNotFoundError()
+
+        supplier_pk = int(registration.get("pk") or 0)
+        if supplier_pk <= 0:
+            raise supplier.PartNotFoundError()
+
+        adapter = self._get_supplier_definition(registration.get("key"))
+        if adapter is None:
+            raise supplier.PartNotFoundError()
+
+        part_key = str(part_id or "").strip()
+        if part_key == "":
+            raise supplier.PartNotFoundError()
+
+        response = self.get_candidates(
+            supplier=supplier_pk,
+            query=part_key,
+            max_results=self._get_supplier_max_candidates(supplier_pk, default=40),
+            user=None,
+        )
+
+        if response.get("error_status") != "OK":
+            raise supplier.PartNotFoundError()
+
+        selected = None
+        for candidate_raw in response.get("candidates", []):
+            candidate = adapter.normalize_candidate(candidate_raw)
+            sku = adapter.get_candidate_supplier_part_number(candidate)
+            mpn = adapter.get_candidate_manufacturer_part_number(candidate)
+            if part_key.lower() in [sku.lower(), mpn.lower()]:
+                selected = candidate
+                break
+
+        if selected is None and response.get("candidates"):
+            selected = adapter.normalize_candidate(response.get("candidates", [])[0])
+
+        if selected is None:
+            raise supplier.PartNotFoundError()
+
+        selected["_supplier_key"] = registration.get("key")
+        selected["_supplier_pk"] = supplier_pk
+        return selected
+
+    def get_pricing_data(self, data):
+        candidate = self._normalize_import_payload(data)
+        pricing = {}
+
+        for price_break in candidate.get("price_breaks", []) or []:
+            quantity = self._to_int_from_string(price_break.get("quantity"), default=0)
+            if quantity <= 0:
+                continue
+
+            price = self._to_float(price_break.get("price"), default=0.0)
+            currency = str(price_break.get("currency") or "").strip()
+            if currency == "":
+                currency = InvenTreeSetting.get_setting("INVENTREE_DEFAULT_CURRENCY")
+
+            pricing[quantity] = (price, currency)
+
+        return pricing
+
+    def get_parameters(self, data):
+        candidate = self._normalize_import_payload(data)
+        parameters = []
+
+        for name, value in (candidate.get("spec_attributes") or {}).items():
+            name_text = str(name or "").strip()
+            value_text = str(value or "").strip()
+            if name_text == "" or value_text == "":
+                continue
+            parameters.append(
+                supplier.ImportParameter(name=name_text, value=value_text)
+            )
+
+        packaging = str(candidate.get("packaging") or "").strip()
+        if packaging:
+            parameters.append(
+                supplier.ImportParameter(name="Packaging", value=packaging)
+            )
+
+        return parameters
+
+    def import_part(self, data, *, category=None, creation_user=None):
+        candidate = self._normalize_import_payload(data)
+        name = str(
+            candidate.get("manufacturer_part_number")
+            or candidate.get("supplier_part_number")
+            or ""
+        ).strip()
+
+        if name == "":
+            raise supplier.PartImportError(
+                "Candidate does not include a usable part name"
+            )
+
+        part = Part.objects.filter(name__iexact=name).first()
+        if part is None:
+            if category is None:
+                raise supplier.PartImportError(
+                    "Category is required when importing a new part"
+                )
+
+            part = Part.objects.create(
+                name=name,
+                description=str(candidate.get("description") or "").strip(),
+                purchaseable=True,
+                category=category,
+            )
+
+        return part
+
+    def import_manufacturer_part(self, data, *, part):
+        candidate = self._normalize_import_payload(data)
+        supplier_key = str(candidate.get("_supplier_key") or "").strip().lower()
+        adapter = self._get_supplier_definition(supplier_key)
+        if adapter is None:
+            raise supplier.PartImportError("Unknown supplier adapter for import")
+
+        manufacturer_part = self._resolve_candidate_manufacturer_part(
+            part=part,
+            candidate=candidate,
+            adapter=adapter,
+        )
+
+        if manufacturer_part is None:
+            raise supplier.PartImportError("Failed to resolve manufacturer part")
+
+        return manufacturer_part
+
+    def import_supplier_part(self, data, *, part, manufacturer_part):
+        candidate = self._normalize_import_payload(data)
+        supplier_pk = self._to_int_from_string(candidate.get("_supplier_pk"), default=0)
+        if supplier_pk <= 0:
+            raise supplier.PartImportError(
+                "Supplier import context is missing supplier PK"
+            )
+
+        supplier_company = Company.objects.filter(pk=supplier_pk).first()
+        if supplier_company is None:
+            raise supplier.PartImportError("Supplier company not found")
+
+        supplier_key = str(candidate.get("_supplier_key") or "").strip().lower()
+        adapter = self._get_supplier_definition(supplier_key)
+        if adapter is None:
+            raise supplier.PartImportError("Unknown supplier adapter for import")
+
+        candidate = adapter.normalize_candidate(candidate)
+        sku = adapter.get_candidate_supplier_part_number(candidate)
+        if sku == "":
+            raise supplier.PartImportError("Candidate supplier part number missing")
+
+        supplier_part = SupplierPart.objects.filter(
+            part=part,
+            supplier=supplier_company,
+            SKU__iexact=sku,
+        ).first()
+
+        update_data = adapter.build_supplier_part_update_data(candidate)
+        if supplier_part is None:
+            supplier_part = SupplierPart.objects.create(
+                part=part,
+                supplier=supplier_company,
+                manufacturer_part=manufacturer_part,
+                SKU=sku,
+                **update_data,
+            )
+        else:
+            supplier_part.manufacturer_part = manufacturer_part
+            for key, value in update_data.items():
+                setattr(supplier_part, key, value)
+            supplier_part.save()
+
+        SupplierPriceBreak.objects.filter(part=supplier_part).delete()
+        for quantity, (price, currency) in self.get_pricing_data(candidate).items():
+            SupplierPriceBreak.objects.create(
+                part=supplier_part,
+                quantity=quantity,
+                price=price,
+                price_currency=currency,
+            )
+
+        return supplier_part
 
     def _normalize_param_name(self, value):
         text = str(value or "").strip().lower()
@@ -1215,9 +1542,9 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
         except Exception:
             return None
 
-        for supplier in self._get_registered_suppliers():
-            if supplier_pk == supplier["pk"]:
-                return supplier
+        for registration in self._get_registered_suppliers():
+            if supplier_pk == registration["pk"]:
+                return registration
 
         return None
 
@@ -1239,13 +1566,13 @@ class SupplierScout(SettingsMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugi
         """Return registered suppliers with valid search credentials."""
         ready = []
 
-        for supplier in self._get_registered_suppliers():
-            adapter = self._get_supplier_definition(supplier.get("key"))
+        for registration in self._get_registered_suppliers():
+            adapter = self._get_supplier_definition(registration.get("key"))
             if adapter is None:
                 continue
 
             if adapter.has_search_credentials(user=user):
-                ready.append(supplier)
+                ready.append(registration)
 
         return ready
 

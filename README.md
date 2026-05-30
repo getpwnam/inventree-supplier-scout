@@ -185,8 +185,6 @@ Settings are managed through the InvenTree plugin settings UI (**Settings → Pl
 | `MOUSER_API_RATE_LIMIT_PER_SECOND` | Global | `1` | Maximum Mouser API requests per second. Set to `0` to disable rate limiting. |
 | `MOUSER_API_DAILY_LIMIT` | Global | `1000` | Maximum Mouser API requests per day. Requests beyond this limit raise an error until midnight UTC. Set to `0` for no limit. |
 
-Legacy compatibility: `MOUSERSEARCHKEY` is still read as a fallback to support existing configurations.
-
 ### General Scheduler
 
 | Setting key | Scope | Default | Description |

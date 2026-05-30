@@ -26,7 +26,6 @@ from .adapters import SupplierAPIClient
 
 
 MOUSER_SEARCH_API_KEY_SETTING = "MOUSER_APIKEY_SEARCH"
-MOUSER_SEARCH_API_KEY_LEGACY_SETTING = "MOUSERSEARCHKEY"
 
 
 MOUSER_SETTINGS = {
@@ -133,19 +132,8 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
             )
             if user_key not in (None, ""):
                 return str(user_key).strip()
-
-            legacy_user_key = self.plugin.get_user_setting(
-                MOUSER_SEARCH_API_KEY_LEGACY_SETTING, user=user, backup_value=None
-            )
-            if legacy_user_key not in (None, ""):
-                return str(legacy_user_key).strip()
-
-        global_key = self.get_setting(MOUSER_SEARCH_API_KEY_SETTING, backup_value=None)
-        if global_key in (None, ""):
-            global_key = self.get_setting(
-                MOUSER_SEARCH_API_KEY_LEGACY_SETTING, backup_value=""
-            )
-        return str(global_key or "").strip()
+        global_key = self.get_setting(MOUSER_SEARCH_API_KEY_SETTING, backup_value="")
+        return str(global_key).strip()
 
     def _get_cache_dir(self):
         """Return the cache directory path, creating it if necessary."""

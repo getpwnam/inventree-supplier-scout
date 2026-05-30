@@ -732,6 +732,52 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
             core_module.SupplierPart.objects = original_supplier_part_objects
             core_module.Company.objects = original_company_objects
 
+    def test_get_dashboard_metrics_payload_includes_query_and_cache(self):
+        class FakeAdapter:
+            key = "mouser"
+
+            def has_search_credentials(self, user=None):
+                del user
+                return True
+
+            def get_api_usage_status(self):
+                return {
+                    "rate_limit_per_second": 1,
+                    "daily_limit": 1000,
+                    "daily_count": 10,
+                    "daily_remaining": 990,
+                }
+
+            def get_cache_status(self):
+                return {
+                    "enabled": True,
+                    "cache_backend": "filesystem",
+                    "cache_file_count": 5,
+                }
+
+        self.scout._get_registered_suppliers = lambda: [
+            {"key": "mouser", "pk": 7, "name": "Mouser"}
+        ]
+        self.scout._get_supplier_definition = (
+            lambda supplier_key: FakeAdapter() if supplier_key == "mouser" else None
+        )
+
+        self.settings[self.scout._supplier_metric_key("mouser", "QUERY_TOTAL")] = 3
+        self.settings[self.scout._supplier_metric_key("mouser", "QUERY_OK")] = 2
+        self.settings[self.scout._supplier_metric_key("mouser", "QUERY_ERROR")] = 1
+        self.settings[self.scout._supplier_metric_key("mouser", "QUERY_CANDIDATE_TOTAL")] = 9
+
+        payload = self.scout._get_dashboard_metrics_payload()
+
+        self.assertEqual(payload["message"], "OK")
+        self.assertEqual(len(payload["suppliers"]), 1)
+        supplier = payload["suppliers"][0]
+        self.assertEqual(supplier["supplier_name"], "Mouser")
+        self.assertEqual(supplier["query_metrics"]["total_queries"], 3)
+        self.assertEqual(supplier["query_metrics"]["ok_queries"], 2)
+        self.assertEqual(supplier["query_metrics"]["error_queries"], 1)
+        self.assertEqual(supplier["cache_status"]["cache_file_count"], 5)
+
 
 if __name__ == "__main__":
     unittest.main()

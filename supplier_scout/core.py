@@ -1639,6 +1639,75 @@ class SupplierScout(
 
         return adapter.get_max_candidates(default=default)
 
+    def _supplier_metric_key(self, supplier_key, suffix):
+        key = re.sub(r"[^A-Za-z0-9]+", "_", str(supplier_key or "").upper()).strip(
+            "_"
+        )
+        return f"{key}_{suffix}"
+
+    def _supplier_metric_int(self, supplier_key, suffix, default=0):
+        key = self._supplier_metric_key(supplier_key, suffix)
+        return self._to_int_from_string(self.get_setting(key, backup_value=default), default=default)
+
+    def _increment_supplier_metric(self, supplier_key, suffix, amount=1):
+        amount = int(amount or 0)
+        key = self._supplier_metric_key(supplier_key, suffix)
+        current = self._supplier_metric_int(supplier_key, suffix, default=0)
+        self.set_setting(key, current + amount)
+
+    def _record_supplier_query_metrics(self, supplier_key, response):
+        self._increment_supplier_metric(supplier_key, "QUERY_TOTAL", amount=1)
+        self.set_setting(self._supplier_metric_key(supplier_key, "QUERY_LAST_TS"), int(time.time()))
+
+        status = str((response or {}).get("error_status") or "").strip().upper()
+        candidates = len((response or {}).get("candidates", []) or [])
+
+        if status == "OK":
+            self._increment_supplier_metric(supplier_key, "QUERY_OK", amount=1)
+            self._increment_supplier_metric(
+                supplier_key,
+                "QUERY_CANDIDATE_TOTAL",
+                amount=max(0, int(candidates)),
+            )
+        else:
+            self._increment_supplier_metric(supplier_key, "QUERY_ERROR", amount=1)
+
+    def _get_supplier_query_metrics(self, supplier_key):
+        return {
+            "total_queries": self._supplier_metric_int(supplier_key, "QUERY_TOTAL", default=0),
+            "ok_queries": self._supplier_metric_int(supplier_key, "QUERY_OK", default=0),
+            "error_queries": self._supplier_metric_int(supplier_key, "QUERY_ERROR", default=0),
+            "total_candidates_returned": self._supplier_metric_int(
+                supplier_key, "QUERY_CANDIDATE_TOTAL", default=0
+            ),
+            "last_query_ts": self._supplier_metric_int(supplier_key, "QUERY_LAST_TS", default=0),
+        }
+
+    def _get_dashboard_metrics_payload(self):
+        suppliers = []
+
+        for registration in self._get_registered_suppliers():
+            supplier_key = registration.get("key")
+            adapter = self._get_supplier_definition(supplier_key)
+            if adapter is None:
+                continue
+
+            suppliers.append({
+                "supplier_pk": int(registration.get("pk") or 0),
+                "supplier_key": supplier_key,
+                "supplier_name": registration.get("name") or supplier_key,
+                "configured": adapter.has_search_credentials(user=None),
+                "query_metrics": self._get_supplier_query_metrics(supplier_key),
+                "api_usage": adapter.get_api_usage_status(),
+                "cache_status": adapter.get_cache_status(),
+            })
+
+        return {
+            "message": "OK",
+            "suppliers": suppliers,
+            "updated_ts": int(time.time()),
+        }
+
     def _get_resync_last_attempt_setting_key(self, supplier_key):
         key = re.sub(r"[^A-Za-z0-9]+", "_", str(supplier_key or "").upper()).strip(
             "_"
@@ -1901,13 +1970,15 @@ class SupplierScout(
         if registration is not None:
             adapter = self._get_supplier_definition(registration.get("key"))
             if adapter is not None:
-                return adapter.get_candidates(
+                response = adapter.get_candidates(
                     query,
                     max_results=max_results,
                     user=user,
                     min_qty=min_qty,
                     max_qty=max_qty,
                 )
+                self._record_supplier_query_metrics(registration.get("key"), response)
+                return response
 
         return {
             "error_status": _("Unknown supplier for candidate search"),
@@ -1935,6 +2006,11 @@ class SupplierScout(
                 r"ratelimitstatus(?:\.(?P<format>json))?$",
                 self.rate_limit_status,
                 name="rate-limit-status",
+            ),
+            re_path(
+                r"dashboardmetrics(?:\.(?P<format>json))?$",
+                self.dashboard_metrics,
+                name="dashboard-metrics",
             ),
             re_path(
                 r"tokendebug(?:\.(?P<format>json))?$",
@@ -2076,6 +2152,10 @@ class SupplierScout(
 
         return JsonResponse(result)
 
+    def dashboard_metrics(self, request):
+        del request
+        return JsonResponse(self._get_dashboard_metrics_payload())
+
     def token_debug(self, request):
         """Return token attribution debug data for a part.
 
@@ -2153,6 +2233,31 @@ class SupplierScout(
     def get_ui_panels(self, request, context, **kwargs):
         return []
 
+    def get_ui_dashboard_items(self, request, context, **kwargs):
+        del context, kwargs
+
+        suppliers = self._get_registered_suppliers()
+        if not suppliers:
+            return []
+
+        return [
+            {
+                "key": "supplierscout-dashboard-metrics",
+                "title": "Supplier Scout Metrics",
+                "description": "Supplier query, cache, and API usage diagnostics",
+                "source": self.plugin_static_file(
+                    "Dashboard.js:renderSupplierScoutDashboardItem"
+                ),
+                "context": {
+                    "metrics_url": f"/{self.base_url}dashboardmetrics",
+                },
+                "options": {
+                    "width": 6,
+                    "height": 3,
+                },
+            }
+        ]
+
     def get_ui_primary_actions(self, request, context, **kwargs):
         actions = []
         context = context or {}
@@ -2195,7 +2300,7 @@ class SupplierScout(
             "key": "supplierscout-part-match-action",
             "title": "Supplier Match",
             "icon": "ti:search",
-            "source": self.plugin_static_file("Panel.js:getFeature"),
+            "source": self.plugin_static_file("Panel.js:getFeature?v=20260529a"),
             "context": {
                 "title": "Supplier Part Matching",
                 "search_url": f"/{self.base_url}searchcandidates",

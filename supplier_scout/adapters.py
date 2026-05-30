@@ -271,6 +271,13 @@ class BaseSupplierAdapter:
             "daily_reset_at": reset_at,
         }
 
+    def get_cache_status(self):
+        """Return supplier-specific cache diagnostics for dashboard reporting."""
+        return {
+            "enabled": False,
+            "cache_backend": "none",
+        }
+
     def get_registered_supplier(self):
         try:
             supplier_pk = int(self.get_setting(self.company_setting))

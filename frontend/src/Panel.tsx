@@ -432,46 +432,51 @@ function SupplierScoutMatcher({
         </Button>
       </Group>
 
-      <Group justify='space-between' align='center'>
-        {renderRateBadge()}
-        <Group gap='xs'>
-          <Button
-            variant='subtle'
-            size='xs'
-            onClick={() => fetchRateStatus()}
-            loading={loadingRateStatus}
-          >
-            Refresh API Usage
-          </Button>
-          <Button
-            variant='light'
-            size='xs'
-            onClick={() => runResync('part')}
-            loading={runningResync}
-          >
-            Resync This Part
-          </Button>
-          <Button
-            variant='light'
-            size='xs'
-            onClick={() => runResync('supplier')}
-            loading={runningResync}
-          >
-            Resync Supplier Batch
-          </Button>
-          <Tooltip label='Admin only: reset supplier round-robin cursor to first supplier part'>
+      <Paper withBorder p='xs' radius='md'>
+        <Stack gap='xs'>
+          <Text size='sm' fw={600}>
+            API Usage
+          </Text>
+          {renderRateBadge()}
+          <Group gap='xs'>
             <Button
-              variant='outline'
-              color='orange'
+              variant='subtle'
               size='xs'
-              onClick={() => runResync('reset_cursor')}
+              onClick={() => fetchRateStatus()}
+              loading={loadingRateStatus}
+            >
+              Refresh API Usage
+            </Button>
+            <Button
+              variant='light'
+              size='xs'
+              onClick={() => runResync('part')}
               loading={runningResync}
             >
-              Reset Supplier Cursor
+              Resync This Part
             </Button>
-          </Tooltip>
-        </Group>
-      </Group>
+            <Button
+              variant='light'
+              size='xs'
+              onClick={() => runResync('supplier')}
+              loading={runningResync}
+            >
+              Resync Supplier Batch
+            </Button>
+            <Tooltip label='Admin only: reset supplier round-robin cursor to first supplier part'>
+              <Button
+                variant='outline'
+                color='orange'
+                size='xs'
+                onClick={() => runResync('reset_cursor')}
+                loading={runningResync}
+              >
+                Reset Supplier Cursor
+              </Button>
+            </Tooltip>
+          </Group>
+        </Stack>
+      </Paper>
 
       {resyncResult && (
         <Paper withBorder p='xs' radius='md'>

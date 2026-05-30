@@ -189,6 +189,47 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
             # Silently fail if cache write fails
             pass
 
+    def get_cache_status(self):
+        ttl_seconds = self._get_cache_ttl_seconds()
+
+        if ttl_seconds <= 0:
+            return {
+                "enabled": False,
+                "cache_backend": "filesystem",
+                "cache_ttl_seconds": 0,
+                "cache_path": "",
+                "cache_file_count": 0,
+                "cache_size_bytes": 0,
+            }
+
+        try:
+            cache_dir = self._get_cache_dir()
+            files = [entry for entry in cache_dir.glob("*.json") if entry.is_file()]
+            total_bytes = 0
+            for entry in files:
+                try:
+                    total_bytes += entry.stat().st_size
+                except OSError:
+                    pass
+
+            return {
+                "enabled": True,
+                "cache_backend": "filesystem",
+                "cache_ttl_seconds": ttl_seconds,
+                "cache_path": str(cache_dir),
+                "cache_file_count": len(files),
+                "cache_size_bytes": total_bytes,
+            }
+        except Exception:
+            return {
+                "enabled": True,
+                "cache_backend": "filesystem",
+                "cache_ttl_seconds": ttl_seconds,
+                "cache_path": "",
+                "cache_file_count": 0,
+                "cache_size_bytes": 0,
+            }
+
     def _post(self, url, payload):
         self.enforce_api_rate_limits(cost=1)
         return self.transport.api_call(

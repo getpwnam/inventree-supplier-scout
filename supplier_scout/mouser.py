@@ -25,13 +25,17 @@ from .adapters import SupplierAPIRateLimitError
 from .adapters import SupplierAPIClient
 
 
+MOUSER_SEARCH_API_KEY_SETTING = "MOUSER_APIKEY_SEARCH"
+MOUSER_SEARCH_API_KEY_LEGACY_SETTING = "MOUSERSEARCHKEY"
+
+
 MOUSER_SETTINGS = {
     "MOUSER_PK": {
         "name": _("Mouser Supplier ID"),
         "description": _("Primary key of the Mouser supplier"),
         "model": "company.company",
     },
-    "MOUSERSEARCHKEY": {
+    MOUSER_SEARCH_API_KEY_SETTING: {
         "name": _("Mouser search API key"),
         "description": _("Mouser part search API key"),
     },
@@ -64,7 +68,7 @@ MOUSER_SETTINGS = {
 }
 
 MOUSER_USER_SETTINGS = {
-    "MOUSERSEARCHKEY": {
+    MOUSER_SEARCH_API_KEY_SETTING: {
         "name": _("Mouser search API key (user override)"),
         "description": _("User-specific Mouser search API key"),
         "protected": True,
@@ -120,11 +124,28 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         )
 
     def has_search_credentials(self, user=None):
-        api_key = str(
-            self.get_effective_setting("MOUSERSEARCHKEY", user=user, backup_value="")
-            or ""
-        ).strip()
-        return api_key != ""
+        return self._get_search_api_key(user=user) != ""
+
+    def _get_search_api_key(self, user=None):
+        if user is not None:
+            user_key = self.plugin.get_user_setting(
+                MOUSER_SEARCH_API_KEY_SETTING, user=user, backup_value=None
+            )
+            if user_key not in (None, ""):
+                return str(user_key).strip()
+
+            legacy_user_key = self.plugin.get_user_setting(
+                MOUSER_SEARCH_API_KEY_LEGACY_SETTING, user=user, backup_value=None
+            )
+            if legacy_user_key not in (None, ""):
+                return str(legacy_user_key).strip()
+
+        global_key = self.get_setting(MOUSER_SEARCH_API_KEY_SETTING, backup_value=None)
+        if global_key in (None, ""):
+            global_key = self.get_setting(
+                MOUSER_SEARCH_API_KEY_LEGACY_SETTING, backup_value=""
+            )
+        return str(global_key or "").strip()
 
     def _get_cache_dir(self):
         """Return the cache directory path, creating it if necessary."""
@@ -243,9 +264,7 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         )
 
     def _build_search_url(self, user=None):
-        api_key = self.get_effective_setting(
-            "MOUSERSEARCHKEY", user=user, backup_value=""
-        )
+        api_key = self._get_search_api_key(user=user)
         currency = InvenTreeSetting.get_setting("INVENTREE_DEFAULT_CURRENCY")
         country = self.COUNTRY_CODES.get(currency, "US")
         return (
@@ -259,9 +278,7 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         )
 
     def _build_keyword_url(self, user=None):
-        api_key = self.get_effective_setting(
-            "MOUSERSEARCHKEY", user=user, backup_value=""
-        )
+        api_key = self._get_search_api_key(user=user)
         currency = InvenTreeSetting.get_setting("INVENTREE_DEFAULT_CURRENCY")
         country = self.COUNTRY_CODES.get(currency, "US")
         return (

@@ -56,8 +56,9 @@ from supplier_scout.adapters import SupplierAPIRateLimitError  # noqa: E402
 class DummyPlugin:
     """Minimal plugin interface required by adapter under test."""
 
-    def __init__(self, settings=None):
+    def __init__(self, settings=None, user_settings=None):
         self.settings = settings or {}
+        self.user_settings = user_settings or {}
 
     def get_setting(self, key, backup_value=None):
         return self.settings.get(key, backup_value)
@@ -65,6 +66,10 @@ class DummyPlugin:
     def get_effective_setting(self, key, user=None, backup_value=None):
         del user
         return self.get_setting(key, backup_value=backup_value)
+
+    def get_user_setting(self, key, user=None, backup_value=None):
+        del user
+        return self.user_settings.get(key, backup_value)
 
     def set_setting(self, key, value):
         self.settings[key] = value
@@ -118,6 +123,32 @@ class TestMouserSupplierAdapter(unittest.TestCase):
 
         with self.assertRaises(SupplierAPIRateLimitError):
             self.adapter.enforce_api_rate_limits(cost=1)
+
+    @patch("supplier_scout.mouser.InvenTreeSetting")
+    def test_build_keyword_url_uses_new_setting_key(self, mock_setting):
+        mock_setting.get_setting.return_value = "EUR"
+        adapter = MouserSupplierAdapter(
+            DummyPlugin(settings={"MOUSER_APIKEY_SEARCH": "abc123"})
+        )
+
+        url = adapter._build_keyword_url()
+
+        self.assertIn("apiKey=abc123", url)
+        self.assertIn("countryCode=DE", url)
+        self.assertIn("currencyCode=EUR", url)
+
+    @patch("supplier_scout.mouser.InvenTreeSetting")
+    def test_build_keyword_url_supports_legacy_setting_key(self, mock_setting):
+        mock_setting.get_setting.return_value = "EUR"
+        adapter = MouserSupplierAdapter(
+            DummyPlugin(settings={"MOUSERSEARCHKEY": "legacy123"})
+        )
+
+        url = adapter._build_keyword_url()
+
+        self.assertIn("apiKey=legacy123", url)
+        self.assertIn("countryCode=DE", url)
+        self.assertIn("currencyCode=EUR", url)
 
     def test_post_raises_when_daily_limit_reached(self):
         self.adapter.plugin.settings["MOUSER_API_RATE_LIMIT_PER_SECOND"] = 0

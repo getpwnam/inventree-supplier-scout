@@ -58,8 +58,8 @@ function SupplierScoutDashboardItem({
   context: InvenTreePluginContext;
 }) {
   const serverContext = useMemo(() => {
-    return (context.instance || {}) as SupplierMetricsContext;
-  }, [context.instance]);
+    return (context.context || {}) as SupplierMetricsContext;
+  }, [context.context]);
 
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');

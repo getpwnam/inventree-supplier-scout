@@ -265,6 +265,11 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
             )
         )
 
+    def test_user_setting_defaults_do_not_override_globals(self):
+        self.assertEqual(SupplierScout.USER_SETTINGS["TOKEN_NAME_MODE"]["default"], "")
+        self.assertEqual(SupplierScout.USER_SETTINGS["RANKING_STRATEGY"]["default"], "")
+        self.assertEqual(SupplierScout.USER_SETTINGS["TOP_N_CANDIDATES"]["default"], "")
+
     def test_normalize_capacitance_token_variants(self):
         self.assertEqual(self.scout._normalize_capacitance_token("10u"), "10uF")
         self.assertEqual(self.scout._normalize_capacitance_token("4n7"), "4.7nF")

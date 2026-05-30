@@ -125,12 +125,12 @@ class SupplierScout(
                 ("availability", _("Availability first")),
                 ("price", _("Price first")),
             ],
-            "default": "balanced",
+            "default": "",
         },
         "TOP_N_CANDIDATES": {
             "name": _("Top N candidate results (user override)"),
             "description": _("Default number of ranked candidates shown"),
-            "default": 10,
+            "default": "",
         },
         "TOKEN_NAME_MODE": {
             "name": _("Name token strategy (user override)"),
@@ -142,7 +142,7 @@ class SupplierScout(
                 ("always", _("Always include name and description tokens")),
                 ("never", _("Never include name and description tokens")),
             ],
-            "default": "fallback",
+            "default": "",
         },
     }
 

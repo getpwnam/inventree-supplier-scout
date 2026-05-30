@@ -306,7 +306,7 @@ function SupplierScoutMatcher({
         pk: serverContext.part_pk,
         supplier: Number(supplier),
         query: query.trim(),
-        top_n: serverContext.top_n || 10,
+        top_n: serverContext.top_n ?? 10,
         ...(minQty && { min_qty: Number(minQty) }),
         ...(maxQty && { max_qty: Number(maxQty) })
       };

@@ -2244,7 +2244,7 @@ class SupplierScout(
             {
                 "key": "supplierscout-dashboard-metrics",
                 "title": "Supplier Scout Metrics",
-                "description": "Supplier query, cache, and API usage diagnostics",
+                "description": _("Supplier query, cache, and API usage diagnostics"),
                 "source": self.plugin_static_file(
                     "Dashboard.js:renderSupplierScoutDashboardItem"
                 ),

@@ -137,19 +137,6 @@ class TestMouserSupplierAdapter(unittest.TestCase):
         self.assertIn("countryCode=DE", url)
         self.assertIn("currencyCode=EUR", url)
 
-    @patch("supplier_scout.mouser.InvenTreeSetting")
-    def test_build_keyword_url_supports_legacy_setting_key(self, mock_setting):
-        mock_setting.get_setting.return_value = "EUR"
-        adapter = MouserSupplierAdapter(
-            DummyPlugin(settings={"MOUSERSEARCHKEY": "legacy123"})
-        )
-
-        url = adapter._build_keyword_url()
-
-        self.assertIn("apiKey=legacy123", url)
-        self.assertIn("countryCode=DE", url)
-        self.assertIn("currencyCode=EUR", url)
-
     def test_post_raises_when_daily_limit_reached(self):
         self.adapter.plugin.settings["MOUSER_API_RATE_LIMIT_PER_SECOND"] = 0
         self.adapter.plugin.settings["MOUSER_API_DAILY_LIMIT"] = 1

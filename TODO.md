@@ -20,14 +20,6 @@ When the user expands "Show Search Query":
 - The `TagsInput` value is what gets sent as the search payload, so user edits are fully respected.
 - Replaces the current plain textarea entirely.
 
-### 3. User setting default bug
-- `USER_SETTINGS["TOKEN_NAME_MODE"]` currently defaults to `"fallback"`, which overrides the global setting unconditionally even when the user has never changed it.
-- Fix: change default to `""` so `get_effective_setting()` falls through to the global setting.
-- Also audit `RANKING_STRATEGY` and `TOP_N_CANDIDATES` user-setting defaults for the same issue.
-- `get_effective_setting` already skips values in `[None, ""]` — just changing the defaults is sufficient.
-
-**Files to touch:** `supplier_scout/core.py`, `frontend/src/Panel.tsx`
-
 ---
 
 ## Static asset sync automation
@@ -37,4 +29,8 @@ rsync -av --delete \
   /home/inventree-supplier-scout/supplier_scout/static/ \
   /home/inventree/dev/static/plugins/supplierscout/
 ```
-Add a post-build step (Vite plugin, `package.json` script, or VS Code task) so this happens automatically.
+Skill added: use `/static-asset-sync` to run this workflow in chat.
+
+Combined skill added: use `/build-and-sync-static-assets` to run build + sync in one command.
+
+Future improvement: add a post-build step (Vite plugin, `package.json` script, or VS Code task) so this happens automatically even without chat invocation.

@@ -52,7 +52,7 @@ After activating the plugin, you must configure at least one supplier before you
 
 1. Open **Settings → Plugins** and click on **Supplier Scout → Plugin Settings**.
 2. Set the **Mouser Supplier ID** (`MOUSER_PK`) to the primary key of your Mouser company record in InvenTree. If you have not added Mouser as a supplier yet, create it in **Purchasing → Suppliers** first.
-3. Set the **Mouser search API key** (`MOUSERSEARCHKEY`). Obtain a free API key from the [Mouser API portal](https://www.mouser.com/api-hub/).
+3. Set the **Mouser search API key** (`MOUSER_APIKEY_SEARCH`). Obtain a free API key from the [Mouser API portal](https://www.mouser.com/api-hub/).
 4. Save. The *Supplier Match* action will now appear on every purchaseable part.
 
 ## Usage
@@ -166,8 +166,8 @@ Settings are managed through the InvenTree plugin settings UI (**Settings → Pl
 | Setting key | Scope | Default | Description |
 |---|---|---|---|
 | `MOUSER_PK` | Global | — | Primary key of the Mouser supplier company record in InvenTree. Must be set before search works. |
-| `MOUSERSEARCHKEY` | Global | — | Global Mouser Part Search API key. Obtain from the [Mouser API Hub](https://www.mouser.com/api-hub/). |
-| `MOUSERSEARCHKEY` | User | — | Per-user Mouser API key. Overrides the global key for that user's searches. Stored encrypted. |
+| `MOUSER_APIKEY_SEARCH` | Global | — | Global Mouser Part Search API key. Obtain from the [Mouser API Hub](https://www.mouser.com/api-hub/). |
+| `MOUSER_APIKEY_SEARCH` | User | — | Per-user Mouser API key. Overrides the global key for that user's searches. Stored encrypted. |
 | `MOUSER_MAX_CANDIDATES` | Global | `40` | Maximum number of raw Mouser results fetched before ranking. Higher values improve match quality at the cost of more API calls. |
 | `MOUSER_MIN_PRICE_QUANTITY` | Global | `1` | Minimum quantity used when selecting the best price break (e.g., `1` for single-unit prices, `10` for tape-and-reel). |
 | `MOUSER_MIN_PRICE_QUANTITY` | User | — | User override for the minimum price quantity. |
@@ -184,6 +184,8 @@ Settings are managed through the InvenTree plugin settings UI (**Settings → Pl
 | `MOUSER_RESYNC_BATCH_SIZE` | Global | `100` | Maximum number of existing Mouser supplier parts to refresh per scheduled run. Uses a round-robin cursor to spread work across runs. |
 | `MOUSER_API_RATE_LIMIT_PER_SECOND` | Global | `1` | Maximum Mouser API requests per second. Set to `0` to disable rate limiting. |
 | `MOUSER_API_DAILY_LIMIT` | Global | `1000` | Maximum Mouser API requests per day. Requests beyond this limit raise an error until midnight UTC. Set to `0` for no limit. |
+
+Legacy compatibility: `MOUSERSEARCHKEY` is still read as a fallback to support existing configurations.
 
 ### General Scheduler
 

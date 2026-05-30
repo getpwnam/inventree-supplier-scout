@@ -2307,6 +2307,7 @@ class SupplierScout(
                 "apply_url": f"/{self.base_url}applycandidates",
                 "run_resync_url": f"/{self.base_url}runresync",
                 "rate_status_url": f"/{self.base_url}ratelimitstatus",
+                "token_debug_url": f"/{self.base_url}tokendebug",
                 "default_query": self._build_initial_search_query(
                     part, user=request.user
                 ),

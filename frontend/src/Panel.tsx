@@ -9,13 +9,14 @@ import {
   Button,
   Checkbox,
   Group,
+  Loader,
   NativeSelect,
   Paper,
   ScrollArea,
   Stack,
   Table,
+  TagsInput,
   Text,
-  Textarea,
   TextInput,
   Title,
   Tooltip
@@ -48,11 +49,25 @@ type MatcherContext = {
   apply_url: string;
   run_resync_url?: string;
   rate_status_url?: string;
+  token_debug_url?: string;
   default_query?: string;
   part_pk: number;
   suppliers: Supplier[];
   top_n?: number;
   show_score?: boolean;
+};
+
+type TokenSourceEntry = {
+  source: string;
+  value?: string;
+  tokens?: string[];
+};
+
+type TokenGroups = {
+  nameValues: string[];
+  nameTokens: string[];
+  categoryTokens: string[];
+  parameterTokens: string[];
 };
 
 type SupplierRateStatus = {
@@ -100,7 +115,11 @@ function SupplierScoutMatcher({
   onClose?: () => void;
 }) {
   const suppliers = serverContext.suppliers || [];
-  const [query, setQuery] = useState<string>(serverContext.default_query || '');
+  const [queryTags, setQueryTags] = useState<string[]>(() =>
+    (serverContext.default_query || '')
+      .split(/\s+/)
+      .filter((t) => t.trim().length > 0)
+  );
   const [supplier, setSupplier] = useState<string>(
     suppliers[0] ? String(suppliers[0].pk) : ''
   );
@@ -117,6 +136,18 @@ function SupplierScoutMatcher({
   const [rateStatus, setRateStatus] = useState<SupplierRateStatus | null>(null);
   const [loadingRateStatus, setLoadingRateStatus] = useState<boolean>(false);
   const [resyncResult, setResyncResult] = useState<ResyncResult | null>(null);
+
+  // Token debug state
+  const [tokenGroups, setTokenGroups] = useState<TokenGroups | null>(null);
+  const [tokenDebugFetched, setTokenDebugFetched] = useState<boolean>(false);
+  const [loadingTokens, setLoadingTokens] = useState<boolean>(false);
+  const [includePartName, setIncludePartName] = useState<boolean>(true);
+  const [includePartNameTokens, setIncludePartNameTokens] =
+    useState<boolean>(true);
+  const [includeCategoryTokens, setIncludeCategoryTokens] =
+    useState<boolean>(false);
+  const [includeParameterTokens, setIncludeParameterTokens] =
+    useState<boolean>(false);
 
   const supplierOptions = useMemo(
     () => suppliers.map((s) => ({ label: s.name, value: String(s.pk) })),
@@ -165,6 +196,102 @@ function SupplierScoutMatcher({
     fetchRateStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supplier, serverContext.rate_status_url]);
+
+  useEffect(() => {
+    if (showTokens && !tokenDebugFetched && serverContext.token_debug_url) {
+      fetchTokenDebug();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showTokens]);
+
+  async function fetchTokenDebug() {
+    setLoadingTokens(true);
+    try {
+      const response = await context.api.get(
+        `${serverContext.token_debug_url}?pk=${serverContext.part_pk}`
+      );
+      const data = response?.data || {};
+      const sources: TokenSourceEntry[] = data.debug?.token_sources || [];
+      const queryDebug = data.debug?.query_debug || {};
+
+      const nameVals: string[] = [];
+      const nameToks: string[] = [];
+      const catToks: string[] = [];
+      const paramToks: string[] = [];
+
+      for (const src of sources) {
+        if (src.source === 'name' || src.source === 'description') {
+          if (src.value?.trim()) nameVals.push(src.value.trim());
+          for (const t of src.tokens || []) {
+            if (t.trim()) nameToks.push(t);
+          }
+        } else if (src.source === 'category') {
+          for (const t of src.tokens || []) {
+            if (t.trim()) catToks.push(t);
+          }
+        } else if (src.source === 'parameter') {
+          for (const t of src.tokens || []) {
+            if (t.trim()) paramToks.push(t);
+          }
+        }
+      }
+
+      const groups: TokenGroups = {
+        nameValues: nameVals,
+        nameTokens: dedupTokens(nameToks),
+        categoryTokens: dedupTokens(catToks),
+        parameterTokens: dedupTokens(paramToks)
+      };
+      setTokenGroups(groups);
+
+      const includeNames = queryDebug.include_name_tokens ?? false;
+      setIncludePartName(includeNames);
+      setIncludePartNameTokens(includeNames);
+      setIncludeCategoryTokens(catToks.length > 0);
+      setIncludeParameterTokens(paramToks.length > 0);
+
+      const finalTokens: string[] = queryDebug.final_query_tokens || [];
+      if (finalTokens.length > 0) {
+        setQueryTags(finalTokens);
+      }
+    } catch {
+      // Keep current queryTags on failure
+    } finally {
+      setTokenDebugFetched(true);
+      setLoadingTokens(false);
+    }
+  }
+
+  function dedupTokens(tokens: string[]): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const t of tokens) {
+      const key = t.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push(t);
+      }
+    }
+    return result;
+  }
+
+  function toggleTokenGroup(groupTokens: string[], checked: boolean) {
+    setQueryTags((prev) => {
+      if (checked) {
+        const seen = new Set(prev.map((t) => t.toLowerCase()));
+        const next = [...prev];
+        for (const t of groupTokens) {
+          if (t.trim() && !seen.has(t.toLowerCase())) {
+            seen.add(t.toLowerCase());
+            next.push(t);
+          }
+        }
+        return next;
+      }
+      const groupSet = new Set(groupTokens.map((t) => t.toLowerCase()));
+      return prev.filter((t) => !groupSet.has(t.toLowerCase()));
+    });
+  }
 
   function renderRateBadge() {
     if (!rateStatus) {
@@ -305,7 +432,7 @@ function SupplierScoutMatcher({
       const payload = {
         pk: serverContext.part_pk,
         supplier: Number(supplier),
-        query: query.trim(),
+        query: queryTags.join(' ').trim(),
         top_n: serverContext.top_n ?? 10,
         ...(minQty && { min_qty: Number(minQty) }),
         ...(maxQty && { max_qty: Number(maxQty) })
@@ -498,21 +625,77 @@ function SupplierScoutMatcher({
 
       {showTokens && (
         <Paper withBorder p='md' radius='md' mb='md'>
-          <Stack gap='xs'>
+          <Stack gap='sm'>
             <Text size='sm' fw={600}>
               Search Query Tokens
             </Text>
-            <Text size='xs' c='dimmed'>
-              Edit the search query below. Leave blank to auto-generate from
-              part data.
-            </Text>
-            <Textarea
-              label='Search Query'
-              value={query}
-              onChange={(event) => setQuery(event.currentTarget.value)}
-              placeholder='Enter search terms separated by spaces, or leave blank for auto-generated query'
-              minRows={3}
-              maxRows={6}
+            {loadingTokens && (
+              <Group gap='xs'>
+                <Loader size='xs' />
+                <Text size='xs' c='dimmed'>
+                  Loading token groups…
+                </Text>
+              </Group>
+            )}
+            {tokenGroups && (
+              <Stack gap='xs'>
+                <Text size='xs' c='dimmed'>
+                  Select which token groups to include:
+                </Text>
+                <Group gap='md'>
+                  <Checkbox
+                    label='Part name'
+                    checked={includePartName}
+                    disabled={tokenGroups.nameValues.length === 0}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setIncludePartName(checked);
+                      toggleTokenGroup(tokenGroups.nameValues, checked);
+                    }}
+                  />
+                  <Checkbox
+                    label='Part name tokens'
+                    checked={includePartNameTokens}
+                    disabled={tokenGroups.nameTokens.length === 0}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setIncludePartNameTokens(checked);
+                      toggleTokenGroup(tokenGroups.nameTokens, checked);
+                    }}
+                  />
+                  <Checkbox
+                    label='Category names'
+                    checked={includeCategoryTokens}
+                    disabled={tokenGroups.categoryTokens.length === 0}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setIncludeCategoryTokens(checked);
+                      toggleTokenGroup(tokenGroups.categoryTokens, checked);
+                    }}
+                  />
+                  <Checkbox
+                    label='Parameters'
+                    checked={includeParameterTokens}
+                    disabled={tokenGroups.parameterTokens.length === 0}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setIncludeParameterTokens(checked);
+                      toggleTokenGroup(tokenGroups.parameterTokens, checked);
+                    }}
+                  />
+                </Group>
+              </Stack>
+            )}
+            <TagsInput
+              label='Search query tags'
+              description='Each tag is sent as a search keyword. Add or remove tags manually.'
+              value={queryTags}
+              onChange={setQueryTags}
+              placeholder={
+                queryTags.length === 0 ? 'Type and press Enter to add tags' : ''
+              }
+              splitChars={[' ', ',']}
+              clearable
             />
           </Stack>
         </Paper>

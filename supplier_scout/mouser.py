@@ -1,9 +1,9 @@
 """Mouser supplier adapter."""
 
-import hashlib
 import json
 import re
 import time
+import zlib
 from pathlib import Path
 
 from common.models import InvenTreeSetting
@@ -155,8 +155,9 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
 
     def _build_cache_key(self, url, payload):
         """Build a unique cache key from URL and payload."""
-        key_str = f"{url}:{json.dumps(payload, sort_keys=True)}"
-        return hashlib.sha256(key_str.encode()).hexdigest()
+        del url
+        key_str = json.dumps(payload, sort_keys=True)
+        return f"{zlib.crc32(key_str.encode()) & 0xFFFFFFFF:08x}"
 
     def _get_cache_ttl_seconds(self):
         """Get cache TTL in seconds from settings."""

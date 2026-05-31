@@ -7,6 +7,7 @@ requiring a full InvenTree runtime by stubbing external modules.
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 
 def _install_core_stubs():
@@ -246,6 +247,7 @@ def _install_core_stubs():
 _install_core_stubs()
 
 from supplier_scout.core import SupplierScout  # noqa: E402
+from supplier_scout.adapters import SupplierAPIClient  # noqa: E402
 
 
 class TestSupplierScoutCoreHelpers(unittest.TestCase):
@@ -788,6 +790,70 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         self.assertEqual(supplier["query_metrics"]["ok_queries"], 2)
         self.assertEqual(supplier["query_metrics"]["error_queries"], 1)
         self.assertEqual(supplier["cache_status"]["cache_file_count"], 5)
+
+    def test_supplier_api_client_logs_redacted_request_in_debug_mode(self):
+        client = SupplierAPIClient(
+            plugin=types.SimpleNamespace(
+                get_setting=lambda key, backup_value=None: backup_value
+            ),
+            base_url="https://api.example.invalid",
+        )
+        response = types.SimpleNamespace(status_code=200)
+        settings_module = sys.modules["django.conf"].settings
+        settings_module.DEBUG = True
+
+        with patch(
+            "supplier_scout.adapters.APICallMixin.api_call",
+            return_value=response,
+            create=True,
+        ) as mock_api_call, patch("supplier_scout.adapters.logger") as mock_logger:
+            result = client.api_call(
+                "https://api.example.invalid/search?apiKey=secret-key&query=abc",
+                method="POST",
+                json={"apiKey": "secret-key", "query": "abc"},
+                headers={
+                    "Authorization": "secret-token",
+                    "X-Trace": "trace-123",
+                },
+            )
+
+        self.assertIs(result, response)
+        mock_api_call.assert_called_once()
+        self.assertEqual(mock_logger.debug.call_count, 2)
+
+        logged_text = " ".join(
+            str(argument)
+            for call in mock_logger.debug.call_args_list
+            for argument in call.args
+        )
+        self.assertIn("***", logged_text)
+        self.assertNotIn("secret-key", logged_text)
+        self.assertNotIn("secret-token", logged_text)
+        self.assertIn("trace-123", logged_text)
+
+    def test_supplier_api_client_skips_logging_when_debug_disabled(self):
+        client = SupplierAPIClient(
+            plugin=types.SimpleNamespace(
+                get_setting=lambda key, backup_value=None: backup_value
+            ),
+            base_url="https://api.example.invalid",
+        )
+        response = types.SimpleNamespace(status_code=200)
+        settings_module = sys.modules["django.conf"].settings
+        settings_module.DEBUG = False
+
+        with patch(
+            "supplier_scout.adapters.APICallMixin.api_call",
+            return_value=response,
+            create=True,
+        ), patch("supplier_scout.adapters.logger") as mock_logger:
+            result = client.api_call(
+                "https://api.example.invalid/search?apiKey=secret-key",
+                method="GET",
+            )
+
+        self.assertIs(result, response)
+        mock_logger.debug.assert_not_called()
 
 
 if __name__ == "__main__":

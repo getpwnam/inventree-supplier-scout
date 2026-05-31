@@ -44,6 +44,8 @@ type Candidate = {
   supplier_link?: string;
   existing_supplier_part?: boolean;
   action?: string;
+  _supplier_pk?: number;
+  _supplier_name?: string;
 };
 
 type MatcherContext = {
@@ -1147,6 +1149,7 @@ function SupplierScoutMatcher({
                 <Table.Tr>
                   <Table.Th>Select</Table.Th>
                   <Table.Th>Status</Table.Th>
+                  <Table.Th>Supplier</Table.Th>
                   <Table.Th>SKU</Table.Th>
                   <Table.Th>Description</Table.Th>
                   <Table.Th>Available</Table.Th>
@@ -1161,6 +1164,13 @@ function SupplierScoutMatcher({
                   const sku = String(candidate.supplier_part_number || '');
                   const selected = selectedSkus.has(sku);
                   const isExisting = candidate.existing_supplier_part === true;
+                  const supplierName =
+                    candidate._supplier_name ||
+                    suppliers.find((item) => item.pk === candidate._supplier_pk)
+                      ?.name ||
+                    suppliers.find((item) => item.pk === Number(supplier))
+                      ?.name ||
+                    '';
 
                   return (
                     <Table.Tr
@@ -1188,6 +1198,7 @@ function SupplierScoutMatcher({
                           {isExisting ? 'Existing (update)' : 'New (create)'}
                         </Badge>
                       </Table.Td>
+                      <Table.Td>{supplierName}</Table.Td>
                       <Table.Td>
                         {candidate.supplier_link ? (
                           <Anchor

@@ -823,6 +823,7 @@ function SupplierScoutMatcher({
               description='Each tag is sent as a search keyword. Add or remove tags manually.'
               value={queryTags}
               onChange={setQueryTags}
+              disabled={loadingTokens}
               renderPill={({ value, onRemove, disabled, reorderProps }) => {
                 const pillValue = String(value || '');
                 const source = getPillSourceForTag(pillValue, tagSourceByToken);

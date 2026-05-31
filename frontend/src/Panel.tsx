@@ -944,6 +944,16 @@ function SupplierScoutMatcher({
         <Collapse expanded={showApiUsage}>
           <Stack gap='xs' mt='xs'>
             {renderRateBadge()}
+            <Group justify='flex-end'>
+              <Button
+                variant='subtle'
+                size='xs'
+                onClick={() => fetchRateStatus()}
+                loading={loadingRateStatus}
+              >
+                Refresh
+              </Button>
+            </Group>
           </Stack>
         </Collapse>
       </Paper>

@@ -9,13 +9,15 @@ import {
   Button,
   Checkbox,
   Group,
+  Loader,
   NativeSelect,
   Paper,
+  Pill,
   ScrollArea,
   Stack,
   Table,
+  TagsInput,
   Text,
-  Textarea,
   TextInput,
   Title,
   Tooltip
@@ -48,11 +50,32 @@ type MatcherContext = {
   apply_url: string;
   run_resync_url?: string;
   rate_status_url?: string;
+  token_debug_url?: string;
   default_query?: string;
   part_pk: number;
   suppliers: Supplier[];
   top_n?: number;
   show_score?: boolean;
+};
+
+type TokenSourceEntry = {
+  source: string;
+  value?: string;
+  tokens?: string[];
+};
+
+type TokenGroups = {
+  nameValues: string[];
+  nameTokens: string[];
+  categoryTokens: string[];
+  parameterTokens: string[];
+};
+
+type TokenCheckboxState = {
+  includePartName: boolean;
+  includePartNameTokens: boolean;
+  includeCategoryTokens: boolean;
+  includeParameterTokens: boolean;
 };
 
 type SupplierRateStatus = {
@@ -81,6 +104,106 @@ type ResyncResult = {
   cursor_after?: number;
 };
 
+type TokenPillSource =
+  | 'part-name'
+  | 'name-token'
+  | 'category'
+  | 'parameter'
+  | 'manufacturer-part'
+  | 'ipn'
+  | 'sku'
+  | 'manual';
+
+const TOKEN_PILL_META: Record<
+  TokenPillSource,
+  { label: string; color: string }
+> = {
+  'part-name': { label: 'Part name', color: 'pink' },
+  'name-token': { label: 'Name token', color: 'yellow' },
+  category: { label: 'Category', color: 'blue' },
+  parameter: { label: 'Parameter', color: 'teal' },
+  'manufacturer-part': { label: 'Manufacturer part', color: 'red' },
+  ipn: { label: 'IPN', color: 'violet' },
+  sku: { label: 'SKU', color: 'orange' },
+  manual: { label: 'Manual / other', color: 'gray' }
+};
+
+const TOKEN_PILL_PRIORITY: Record<TokenPillSource, number> = {
+  'manufacturer-part': 80,
+  ipn: 75,
+  sku: 70,
+  parameter: 65,
+  category: 60,
+  'part-name': 55,
+  'name-token': 50,
+  manual: 10
+};
+
+const QUERY_SOURCE_TO_PILL_SOURCE: Record<string, TokenPillSource> = {
+  manufacturer_part: 'manufacturer-part',
+  IPN: 'ipn',
+  SKU: 'sku',
+  parameter: 'parameter',
+  category: 'category',
+  name: 'name-token',
+  description: 'name-token'
+};
+
+function normalizeTokenKey(token: string): string {
+  return String(token || '')
+    .trim()
+    .toLowerCase();
+}
+
+function setTokenSource(
+  sourceByToken: Record<string, TokenPillSource>,
+  token: string,
+  source: TokenPillSource
+) {
+  const key = normalizeTokenKey(token);
+  if (!key) {
+    return;
+  }
+
+  const existing = sourceByToken[key];
+  if (
+    !existing ||
+    TOKEN_PILL_PRIORITY[source] > TOKEN_PILL_PRIORITY[existing]
+  ) {
+    sourceByToken[key] = source;
+  }
+}
+
+function getPillSourceForTag(
+  tag: string,
+  sourceByToken: Record<string, TokenPillSource>
+): TokenPillSource {
+  return sourceByToken[normalizeTokenKey(tag)] || 'manual';
+}
+
+function deriveNameTokensFromValues(values: string[]): string[] {
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+
+  for (const value of values) {
+    const parts = String(value || '')
+      .split(/[^A-Za-z0-9]+/)
+      .map((part) => part.trim())
+      .filter((part) => part.length >= 2);
+
+    for (const part of parts) {
+      const key = part.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      tokens.push(part);
+    }
+  }
+
+  return tokens;
+}
+
 function formatUnitPrice(value: unknown): string {
   const numeric = Number(value);
   if (Number.isFinite(numeric)) {
@@ -100,7 +223,13 @@ function SupplierScoutMatcher({
   onClose?: () => void;
 }) {
   const suppliers = serverContext.suppliers || [];
-  const [query, setQuery] = useState<string>(serverContext.default_query || '');
+  const [queryTags, setQueryTags] = useState<string[]>(() =>
+    dedupTokens(
+      (serverContext.default_query || '')
+        .split(/\s+/)
+        .filter((t) => t.trim().length > 0)
+    )
+  );
   const [supplier, setSupplier] = useState<string>(
     suppliers[0] ? String(suppliers[0].pk) : ''
   );
@@ -118,16 +247,101 @@ function SupplierScoutMatcher({
   const [loadingRateStatus, setLoadingRateStatus] = useState<boolean>(false);
   const [resyncResult, setResyncResult] = useState<ResyncResult | null>(null);
 
+  // Token debug state
+  const [tokenGroups, setTokenGroups] = useState<TokenGroups | null>(null);
+  const [tokenDebugFetched, setTokenDebugFetched] = useState<boolean>(false);
+  const [loadingTokens, setLoadingTokens] = useState<boolean>(false);
+  const [tagSourceByToken, setTagSourceByToken] = useState<
+    Record<string, TokenPillSource>
+  >({});
+  const [includePartName, setIncludePartName] = useState<boolean>(true);
+  const [includePartNameTokens, setIncludePartNameTokens] =
+    useState<boolean>(true);
+  const [includeCategoryTokens, setIncludeCategoryTokens] =
+    useState<boolean>(false);
+  const [includeParameterTokens, setIncludeParameterTokens] =
+    useState<boolean>(false);
+
   const supplierOptions = useMemo(
     () => suppliers.map((s) => ({ label: s.name, value: String(s.pk) })),
     [suppliers]
   );
+
+  const tokenDebugUrl = useMemo(() => {
+    if (serverContext.token_debug_url) {
+      return serverContext.token_debug_url;
+    }
+
+    const searchUrl = String(serverContext.search_url || '').trim();
+    if (!searchUrl) {
+      return '';
+    }
+
+    return searchUrl.replace(/searchcandidates(?:\.(json))?$/, 'tokendebug$1');
+  }, [serverContext.search_url, serverContext.token_debug_url]);
 
   const selectedCandidates = useMemo(() => {
     return candidates.filter((candidate) =>
       selectedSkus.has(String(candidate.supplier_part_number || ''))
     );
   }, [candidates, selectedSkus]);
+
+  const activeTokenPillSources = useMemo(() => {
+    const sources = new Set<TokenPillSource>();
+
+    for (const tag of queryTags) {
+      sources.add(getPillSourceForTag(tag, tagSourceByToken));
+    }
+
+    return Array.from(sources).sort(
+      (left, right) => TOKEN_PILL_PRIORITY[right] - TOKEN_PILL_PRIORITY[left]
+    );
+  }, [queryTags, tagSourceByToken]);
+
+  function getTokenCheckboxState(
+    tags: string[],
+    groups: TokenGroups | null
+  ): TokenCheckboxState {
+    if (!groups) {
+      return {
+        includePartName: false,
+        includePartNameTokens: false,
+        includeCategoryTokens: false,
+        includeParameterTokens: false
+      };
+    }
+
+    const activeTokenKeys = new Set(
+      dedupTokens(tags)
+        .map((token) => normalizeTokenKey(token))
+        .filter(Boolean)
+    );
+    const hasAnyActiveToken = (tokens: string[]) =>
+      tokens.some((token) => activeTokenKeys.has(normalizeTokenKey(token)));
+
+    return {
+      includePartName: hasAnyActiveToken(groups.nameValues),
+      includePartNameTokens: hasAnyActiveToken(groups.nameTokens),
+      includeCategoryTokens: hasAnyActiveToken(groups.categoryTokens),
+      includeParameterTokens: hasAnyActiveToken(groups.parameterTokens)
+    };
+  }
+
+  function applyTokenCheckboxState(state: TokenCheckboxState) {
+    setIncludePartName(state.includePartName);
+    setIncludePartNameTokens(state.includePartNameTokens);
+    setIncludeCategoryTokens(state.includeCategoryTokens);
+    setIncludeParameterTokens(state.includeParameterTokens);
+  }
+
+  function updateQueryTagsWithSync(
+    nextTags: string[],
+    groups: TokenGroups | null = tokenGroups
+  ) {
+    const deduped = dedupTokens(nextTags);
+    setQueryTags(deduped);
+    applyTokenCheckboxState(getTokenCheckboxState(deduped, groups));
+  }
 
   async function fetchRateStatus(supplierPk?: string) {
     if (!serverContext.rate_status_url) {
@@ -165,6 +379,162 @@ function SupplierScoutMatcher({
     fetchRateStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supplier, serverContext.rate_status_url]);
+
+  useEffect(() => {
+    if (showTokens && !tokenDebugFetched && tokenDebugUrl) {
+      fetchTokenDebug();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showTokens]);
+
+  async function fetchTokenDebug() {
+    setLoadingTokens(true);
+    try {
+      if (!tokenDebugUrl) {
+        throw new Error('Token debug endpoint unavailable in plugin context');
+      }
+
+      const response = await context.api.get(
+        `${tokenDebugUrl}?pk=${serverContext.part_pk}`
+      );
+      const data = response?.data || {};
+      const sources: TokenSourceEntry[] = data.debug?.token_sources || [];
+      const queryDebug = data.debug?.query_debug || {};
+      const sourceByToken: Record<string, TokenPillSource> = {};
+
+      const nameVals: string[] = [];
+      const nameToks: string[] = [];
+      const catToks: string[] = [];
+      const paramToks: string[] = [];
+
+      const querySourceTokenMap = queryDebug.source_token_map || {};
+      for (const [sourceName, sourceTokens] of Object.entries(
+        querySourceTokenMap
+      )) {
+        const mappedSource = QUERY_SOURCE_TO_PILL_SOURCE[sourceName];
+        if (!mappedSource || !Array.isArray(sourceTokens)) {
+          continue;
+        }
+
+        for (const token of sourceTokens) {
+          setTokenSource(sourceByToken, String(token || ''), mappedSource);
+        }
+      }
+
+      for (const src of sources) {
+        const mappedSource = QUERY_SOURCE_TO_PILL_SOURCE[src.source];
+
+        if (src.source === 'name' || src.source === 'description') {
+          if (src.value?.trim()) {
+            nameVals.push(src.value.trim());
+            setTokenSource(sourceByToken, src.value.trim(), 'part-name');
+          }
+          for (const t of src.tokens || []) {
+            if (t.trim()) {
+              nameToks.push(t);
+              setTokenSource(sourceByToken, t, 'name-token');
+            }
+          }
+        } else if (src.source === 'category') {
+          for (const t of src.tokens || []) {
+            if (t.trim()) {
+              catToks.push(t);
+              setTokenSource(sourceByToken, t, 'category');
+            }
+          }
+        } else if (src.source === 'parameter') {
+          for (const t of src.tokens || []) {
+            if (t.trim()) {
+              paramToks.push(t);
+              setTokenSource(sourceByToken, t, 'parameter');
+            }
+          }
+        } else if (mappedSource) {
+          for (const t of src.tokens || []) {
+            if (t.trim()) {
+              setTokenSource(sourceByToken, t, mappedSource);
+            }
+          }
+        }
+      }
+
+      const fallbackNameTokens = deriveNameTokensFromValues(nameVals);
+      for (const token of fallbackNameTokens) {
+        setTokenSource(sourceByToken, token, 'name-token');
+      }
+      const nameValueKeys = new Set(
+        nameVals.map((value) => normalizeTokenKey(value)).filter(Boolean)
+      );
+      const filteredNameTokens = dedupTokens([
+        ...nameToks,
+        ...fallbackNameTokens
+      ]).filter((token) => !nameValueKeys.has(normalizeTokenKey(token)));
+
+      const groups: TokenGroups = {
+        nameValues: nameVals,
+        nameTokens: filteredNameTokens,
+        categoryTokens: dedupTokens(catToks),
+        parameterTokens: dedupTokens(paramToks)
+      };
+      setTokenGroups(groups);
+      setTagSourceByToken(sourceByToken);
+
+      const finalTokens: string[] = queryDebug.final_query_tokens || [];
+      const initialQueryTokens =
+        finalTokens.length > 0
+          ? dedupTokens(finalTokens)
+          : dedupTokens(queryTags);
+      applyTokenCheckboxState(
+        getTokenCheckboxState(initialQueryTokens, groups)
+      );
+
+      if (finalTokens.length > 0) {
+        // Keep initial pills aligned with checkbox-based behavior by deduping.
+        setQueryTags(initialQueryTokens);
+      }
+    } catch (error: any) {
+      setIsError(true);
+      setStatusMessage(
+        error?.response?.data?.message ||
+          error?.message ||
+          'Could not load query token metadata. Check plugin backend sync/restart.'
+      );
+    } finally {
+      setTokenDebugFetched(true);
+      setLoadingTokens(false);
+    }
+  }
+
+  function dedupTokens(tokens: string[]): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const t of tokens) {
+      const key = t.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push(t);
+      }
+    }
+    return result;
+  }
+
+  function toggleTokenGroup(groupTokens: string[], checked: boolean) {
+    setQueryTags((prev) => {
+      if (checked) {
+        const seen = new Set(prev.map((t) => t.toLowerCase()));
+        const next = [...prev];
+        for (const t of groupTokens) {
+          if (t.trim() && !seen.has(t.toLowerCase())) {
+            seen.add(t.toLowerCase());
+            next.push(t);
+          }
+        }
+        return next;
+      }
+      const groupSet = new Set(groupTokens.map((t) => t.toLowerCase()));
+      return prev.filter((t) => !groupSet.has(t.toLowerCase()));
+    });
+  }
 
   function renderRateBadge() {
     if (!rateStatus) {
@@ -305,7 +675,7 @@ function SupplierScoutMatcher({
       const payload = {
         pk: serverContext.part_pk,
         supplier: Number(supplier),
-        query: query.trim(),
+        query: queryTags.join(' ').trim(),
         top_n: serverContext.top_n ?? 10,
         ...(minQty && { min_qty: Number(minQty) }),
         ...(maxQty && { max_qty: Number(maxQty) })
@@ -498,22 +868,118 @@ function SupplierScoutMatcher({
 
       {showTokens && (
         <Paper withBorder p='md' radius='md' mb='md'>
-          <Stack gap='xs'>
+          <Stack gap='sm'>
             <Text size='sm' fw={600}>
               Search Query Tokens
             </Text>
-            <Text size='xs' c='dimmed'>
-              Edit the search query below. Leave blank to auto-generate from
-              part data.
-            </Text>
-            <Textarea
-              label='Search Query'
-              value={query}
-              onChange={(event) => setQuery(event.currentTarget.value)}
-              placeholder='Enter search terms separated by spaces, or leave blank for auto-generated query'
-              minRows={3}
-              maxRows={6}
+            {loadingTokens && (
+              <Group gap='xs'>
+                <Loader size='xs' />
+                <Text size='xs' c='dimmed'>
+                  Loading token groups…
+                </Text>
+              </Group>
+            )}
+            {tokenGroups && (
+              <Stack gap='xs'>
+                <Text size='xs' c='dimmed'>
+                  Select which token groups to include:
+                </Text>
+                <Group gap='md'>
+                  <Checkbox
+                    label='Part name'
+                    checked={includePartName}
+                    disabled={tokenGroups.nameValues.length === 0}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setIncludePartName(checked);
+                      toggleTokenGroup(tokenGroups.nameValues, checked);
+                    }}
+                  />
+                  <Checkbox
+                    label='Part name tokens'
+                    checked={includePartNameTokens}
+                    disabled={tokenGroups.nameTokens.length === 0}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setIncludePartNameTokens(checked);
+                      toggleTokenGroup(tokenGroups.nameTokens, checked);
+                    }}
+                  />
+                  <Checkbox
+                    label='Category names'
+                    checked={includeCategoryTokens}
+                    disabled={tokenGroups.categoryTokens.length === 0}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setIncludeCategoryTokens(checked);
+                      toggleTokenGroup(tokenGroups.categoryTokens, checked);
+                    }}
+                  />
+                  <Checkbox
+                    label='Parameters'
+                    checked={includeParameterTokens}
+                    disabled={tokenGroups.parameterTokens.length === 0}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setIncludeParameterTokens(checked);
+                      toggleTokenGroup(tokenGroups.parameterTokens, checked);
+                    }}
+                  />
+                </Group>
+              </Stack>
+            )}
+            <TagsInput
+              label='Search query tags'
+              description='Each tag is sent as a search keyword. Add or remove tags manually.'
+              value={queryTags}
+              onChange={(nextTags) => updateQueryTagsWithSync(nextTags)}
+              disabled={loadingTokens}
+              renderPill={({ value, onRemove, disabled, reorderProps }) => {
+                const pillValue = String(value || '');
+                const source = getPillSourceForTag(pillValue, tagSourceByToken);
+                const sourceMeta = TOKEN_PILL_META[source];
+
+                return (
+                  <Pill
+                    withRemoveButton={!disabled}
+                    onRemove={onRemove}
+                    style={{
+                      backgroundColor: `var(--mantine-color-${sourceMeta.color}-light)`,
+                      color: `var(--mantine-color-${sourceMeta.color}-8)`,
+                      border: `1px solid var(--mantine-color-${sourceMeta.color}-3)`
+                    }}
+                    {...reorderProps}
+                  >
+                    {pillValue}
+                  </Pill>
+                );
+              }}
+              placeholder={
+                queryTags.length === 0 ? 'Type and press Enter to add tags' : ''
+              }
+              splitChars={[' ', ',']}
+              clearable
             />
+            {queryTags.length > 0 && (
+              <Stack gap={4}>
+                <Text size='xs' c='dimmed'>
+                  Token source colours:
+                </Text>
+                <Group gap='xs'>
+                  {activeTokenPillSources.map((source) => (
+                    <Badge
+                      key={source}
+                      size='sm'
+                      variant='light'
+                      color={TOKEN_PILL_META[source].color}
+                    >
+                      {TOKEN_PILL_META[source].label}
+                    </Badge>
+                  ))}
+                </Group>
+              </Stack>
+            )}
           </Stack>
         </Paper>
       )}

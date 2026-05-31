@@ -610,7 +610,9 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
             },
         ]
 
-        selected = self.scout._select_resync_candidate(adapter, supplier_part, candidates)
+        selected = self.scout._select_resync_candidate(
+            adapter, supplier_part, candidates
+        )
         self.assertIsNotNone(selected)
         self.assertEqual(selected.get("supplier_part_number"), "SKU-123")
 
@@ -707,9 +709,11 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         original_company_objects = core_module.Company.objects
 
         try:
-            core_module.SupplierPart.objects = FakeSupplierPartManager(
-                [FakeSupplierPart(1), FakeSupplierPart(2), FakeSupplierPart(3)]
-            )
+            core_module.SupplierPart.objects = FakeSupplierPartManager([
+                FakeSupplierPart(1),
+                FakeSupplierPart(2),
+                FakeSupplierPart(3),
+            ])
             core_module.Company.objects = FakeCompanyManager()
 
             self.scout._get_resync_cursor_pk = lambda supplier_key: 2
@@ -770,7 +774,9 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         self.settings[self.scout._supplier_metric_key("mouser", "QUERY_TOTAL")] = 3
         self.settings[self.scout._supplier_metric_key("mouser", "QUERY_OK")] = 2
         self.settings[self.scout._supplier_metric_key("mouser", "QUERY_ERROR")] = 1
-        self.settings[self.scout._supplier_metric_key("mouser", "QUERY_CANDIDATE_TOTAL")] = 9
+        self.settings[
+            self.scout._supplier_metric_key("mouser", "QUERY_CANDIDATE_TOTAL")
+        ] = 9
 
         payload = self.scout._get_dashboard_metrics_payload()
 

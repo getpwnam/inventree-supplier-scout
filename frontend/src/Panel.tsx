@@ -376,7 +376,7 @@ function SupplierScoutMatcher({
       setTagSourceByToken(sourceByToken);
 
       const includeNames = queryDebug.include_name_tokens ?? false;
-      setIncludePartName(includeNames);
+      setIncludePartName(false); // nameValues are never in final_query_tokens; start unchecked
       setIncludePartNameTokens(includeNames);
       setIncludeCategoryTokens(catToks.length > 0);
       setIncludeParameterTokens(paramToks.length > 0);

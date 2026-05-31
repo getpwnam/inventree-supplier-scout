@@ -84,6 +84,15 @@ type TokenCheckboxState = {
   includeParameterTokens: boolean;
 };
 
+type ResultColumnKey =
+  | 'supplier'
+  | 'sku'
+  | 'mpn'
+  | 'description'
+  | 'available'
+  | 'unitPrice'
+  | 'score';
+
 type SupplierRateStatus = {
   supplier_pk: number;
   supplier_key?: string;
@@ -236,6 +245,17 @@ function SupplierScoutMatcher({
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [hasExpandedModal, setHasExpandedModal] = useState<boolean>(false);
   const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
+  const [visibleColumns, setVisibleColumns] = useState<
+    Record<ResultColumnKey, boolean>
+  >({
+    supplier: true,
+    sku: true,
+    mpn: false,
+    description: true,
+    available: true,
+    unitPrice: true,
+    score: serverContext.show_score === true
+  });
   const [rateStatus, setRateStatus] = useState<SupplierRateStatus | null>(null);
   const [rateStatuses, setRateStatuses] = useState<SupplierRateStatus[]>([]);
   const [loadingRateStatus, setLoadingRateStatus] = useState<boolean>(false);
@@ -834,64 +854,95 @@ function SupplierScoutMatcher({
       return;
     }
 
-    if (!supplier) {
-      setIsError(true);
-      setStatusMessage(
-        'Select a specific supplier before applying selected candidates'
-      );
-      return;
-    }
-
     if (selectedCandidates.length === 0) {
       setIsError(true);
       setStatusMessage('Select at least one candidate to apply');
       return;
     }
 
-    const supplierPk = Number(supplier);
-    const candidatesForSelectedSupplier = selectedCandidates.filter(
-      (candidate) =>
-        Number(
-          (
-            candidate as Candidate & {
-              _supplier_pk?: number | string;
-            }
-          )._supplier_pk ?? supplierPk
-        ) === supplierPk
-    );
+    const groupedCandidates = new Map<number, Candidate[]>();
+    const selectedSupplierPk = Number(supplier);
 
-    if (candidatesForSelectedSupplier.length === 0) {
+    for (const candidate of selectedCandidates) {
+      const candidateSupplierPk = Number(
+        candidate._supplier_pk ?? selectedSupplierPk
+      );
+
+      if (!Number.isFinite(candidateSupplierPk) || candidateSupplierPk <= 0) {
+        continue;
+      }
+
+      const existing = groupedCandidates.get(candidateSupplierPk) || [];
+      existing.push(candidate);
+      groupedCandidates.set(candidateSupplierPk, existing);
+    }
+
+    if (groupedCandidates.size === 0) {
       setIsError(true);
-      setStatusMessage('Selected candidates do not match the chosen supplier');
+      setStatusMessage(
+        supplier
+          ? 'Selected candidates do not match the chosen supplier'
+          : 'Selected candidates are missing supplier information'
+      );
       return;
     }
 
     setApplying(true);
 
     try {
-      const payload = {
-        pk: serverContext.part_pk,
-        supplier: supplierPk,
-        candidates: candidatesForSelectedSupplier
-      };
+      let totalCreated = 0;
+      let totalUpdated = 0;
+      let totalErrors = 0;
+      const supplierErrors: string[] = [];
 
-      const response = await context.api.post(serverContext.apply_url, payload);
-      const data = response?.data || {};
+      for (const [supplierPk, candidatesForSupplier] of groupedCandidates) {
+        const payload = {
+          pk: serverContext.part_pk,
+          supplier: supplierPk,
+          candidates: candidatesForSupplier
+        };
 
-      if (data.message !== 'OK') {
-        setIsError(true);
-        setStatusMessage(data.message || 'Apply candidates failed');
-        return;
+        try {
+          const response = await context.api.post(
+            serverContext.apply_url,
+            payload
+          );
+          const data = response?.data || {};
+
+          if (data.message !== 'OK') {
+            totalErrors += candidatesForSupplier.length;
+            supplierErrors.push(
+              `Supplier ${supplierPk}: ${data.message || 'Apply candidates failed'}`
+            );
+            continue;
+          }
+
+          totalCreated += Number(data.created || 0);
+          totalUpdated += Number(data.updated || 0);
+          totalErrors += Number(data.errors || 0);
+        } catch (error: any) {
+          totalErrors += candidatesForSupplier.length;
+          supplierErrors.push(
+            `Supplier ${supplierPk}: ${
+              error?.response?.data?.message ||
+              error?.message ||
+              'Apply candidates failed'
+            }`
+          );
+        }
       }
 
-      const summary = `Applied candidates: created=${data.created || 0}, updated=${data.updated || 0}, errors=${data.errors || 0}`;
-      setIsError((data.errors || 0) > 0);
+      const summary = `Applied candidates: created=${totalCreated}, updated=${totalUpdated}, errors=${totalErrors}`;
+      setIsError(totalErrors > 0);
       setStatusMessage(summary);
 
       notifications.show({
         title: 'Supplier Scout',
-        message: summary,
-        color: (data.errors || 0) > 0 ? 'yellow' : 'green'
+        message:
+          supplierErrors.length > 0
+            ? `${summary}. ${supplierErrors.join(' | ')}`
+            : summary,
+        color: totalErrors > 0 ? 'yellow' : 'green'
       });
 
       setSelectedSkus(new Set());
@@ -919,6 +970,13 @@ function SupplierScoutMatcher({
       }
       return next;
     });
+  }
+
+  function setColumnVisibility(column: ResultColumnKey, visible: boolean) {
+    setVisibleColumns((previous) => ({
+      ...previous,
+      [column]: visible
+    }));
   }
 
   return (
@@ -1143,89 +1201,187 @@ function SupplierScoutMatcher({
 
       {candidates.length > 0 && (
         <Paper withBorder p='xs' radius='md'>
-          <ScrollArea>
-            <Table striped withTableBorder highlightOnHover>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Select</Table.Th>
-                  <Table.Th>Status</Table.Th>
-                  <Table.Th>Supplier</Table.Th>
-                  <Table.Th>SKU</Table.Th>
-                  <Table.Th>Description</Table.Th>
-                  <Table.Th>Available</Table.Th>
-                  <Table.Th>Unit Price</Table.Th>
-                  {serverContext.show_score === true && (
-                    <Table.Th>Score</Table.Th>
-                  )}
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {candidates.map((candidate) => {
-                  const sku = String(candidate.supplier_part_number || '');
-                  const selected = selectedSkus.has(sku);
-                  const isExisting = candidate.existing_supplier_part === true;
-                  const supplierName =
-                    candidate._supplier_name ||
-                    suppliers.find((item) => item.pk === candidate._supplier_pk)
-                      ?.name ||
-                    suppliers.find((item) => item.pk === Number(supplier))
-                      ?.name ||
-                    '';
+          <Stack gap='xs'>
+            <Group gap='md' align='center' wrap='wrap'>
+              <Text size='xs' c='dimmed' fw={600}>
+                Columns
+              </Text>
+              <Checkbox
+                size='xs'
+                label='Supplier'
+                checked={visibleColumns.supplier}
+                onChange={(event) =>
+                  setColumnVisibility('supplier', event.currentTarget.checked)
+                }
+              />
+              <Checkbox
+                size='xs'
+                label='SKU'
+                checked={visibleColumns.sku}
+                onChange={(event) =>
+                  setColumnVisibility('sku', event.currentTarget.checked)
+                }
+              />
+              <Checkbox
+                size='xs'
+                label='MPN'
+                checked={visibleColumns.mpn}
+                onChange={(event) =>
+                  setColumnVisibility('mpn', event.currentTarget.checked)
+                }
+              />
+              <Checkbox
+                size='xs'
+                label='Description'
+                checked={visibleColumns.description}
+                onChange={(event) =>
+                  setColumnVisibility(
+                    'description',
+                    event.currentTarget.checked
+                  )
+                }
+              />
+              <Checkbox
+                size='xs'
+                label='Available'
+                checked={visibleColumns.available}
+                onChange={(event) =>
+                  setColumnVisibility('available', event.currentTarget.checked)
+                }
+              />
+              <Checkbox
+                size='xs'
+                label='Unit Price'
+                checked={visibleColumns.unitPrice}
+                onChange={(event) =>
+                  setColumnVisibility('unitPrice', event.currentTarget.checked)
+                }
+              />
+              {serverContext.show_score === true && (
+                <Checkbox
+                  size='xs'
+                  label='Score'
+                  checked={visibleColumns.score}
+                  onChange={(event) =>
+                    setColumnVisibility('score', event.currentTarget.checked)
+                  }
+                />
+              )}
+            </Group>
 
-                  return (
-                    <Table.Tr
-                      key={
-                        sku ||
-                        `${candidate.manufacturer_part_number}-${candidate.description}`
-                      }
-                    >
-                      <Table.Td>
-                        <Checkbox
-                          checked={selected}
-                          onChange={(event) =>
-                            toggleSelection(
-                              candidate,
-                              event.currentTarget.checked
-                            )
-                          }
-                        />
-                      </Table.Td>
-                      <Table.Td>
-                        <Badge
-                          color={isExisting ? 'blue' : 'gray'}
-                          variant='light'
-                        >
-                          {isExisting ? 'Existing (update)' : 'New (create)'}
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td>{supplierName}</Table.Td>
-                      <Table.Td>
-                        {candidate.supplier_link ? (
-                          <Anchor
-                            href={candidate.supplier_link}
-                            target='_blank'
-                            rel='noopener noreferrer'
+            <Text size='xs' c='dimmed'>
+              Hidden columns are still included when applying selected
+              candidates.
+            </Text>
+
+            <ScrollArea>
+              <Table striped withTableBorder highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Select</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                    {visibleColumns.supplier && <Table.Th>Supplier</Table.Th>}
+                    {visibleColumns.sku && <Table.Th>SKU</Table.Th>}
+                    {visibleColumns.mpn && <Table.Th>MPN</Table.Th>}
+                    {visibleColumns.description && (
+                      <Table.Th>Description</Table.Th>
+                    )}
+                    {visibleColumns.available && <Table.Th>Available</Table.Th>}
+                    {visibleColumns.unitPrice && (
+                      <Table.Th>Unit Price</Table.Th>
+                    )}
+                    {serverContext.show_score === true &&
+                      visibleColumns.score && <Table.Th>Score</Table.Th>}
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {candidates.map((candidate) => {
+                    const sku = String(candidate.supplier_part_number || '');
+                    const selected = selectedSkus.has(sku);
+                    const isExisting =
+                      candidate.existing_supplier_part === true;
+                    const supplierName =
+                      candidate._supplier_name ||
+                      suppliers.find(
+                        (item) => item.pk === candidate._supplier_pk
+                      )?.name ||
+                      suppliers.find((item) => item.pk === Number(supplier))
+                        ?.name ||
+                      '';
+
+                    return (
+                      <Table.Tr
+                        key={
+                          sku ||
+                          `${candidate.manufacturer_part_number}-${candidate.description}`
+                        }
+                      >
+                        <Table.Td>
+                          <Checkbox
+                            checked={selected}
+                            onChange={(event) =>
+                              toggleSelection(
+                                candidate,
+                                event.currentTarget.checked
+                              )
+                            }
+                          />
+                        </Table.Td>
+                        <Table.Td>
+                          <Badge
+                            color={isExisting ? 'blue' : 'gray'}
+                            variant='light'
                           >
-                            {candidate.supplier_part_number || ''}
-                          </Anchor>
-                        ) : (
-                          candidate.supplier_part_number || ''
+                            {isExisting ? 'Existing (update)' : 'New (create)'}
+                          </Badge>
+                        </Table.Td>
+                        {visibleColumns.supplier && (
+                          <Table.Td>{supplierName}</Table.Td>
                         )}
-                      </Table.Td>
-                      <Table.Td>{candidate.description || ''}</Table.Td>
-                      <Table.Td>{candidate.available_quantity ?? ''}</Table.Td>
-                      <Table.Td>
-                        {formatUnitPrice(candidate.unit_price)}
-                      </Table.Td>
-                      {serverContext.show_score === true && (
-                        <Table.Td>{candidate.score ?? ''}</Table.Td>
-                      )}
-                    </Table.Tr>
-                  );
-                })}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
+                        {visibleColumns.sku && (
+                          <Table.Td>
+                            {candidate.supplier_link ? (
+                              <Anchor
+                                href={candidate.supplier_link}
+                                target='_blank'
+                                rel='noopener noreferrer'
+                              >
+                                {candidate.supplier_part_number || ''}
+                              </Anchor>
+                            ) : (
+                              candidate.supplier_part_number || ''
+                            )}
+                          </Table.Td>
+                        )}
+                        {visibleColumns.mpn && (
+                          <Table.Td>
+                            {candidate.manufacturer_part_number || ''}
+                          </Table.Td>
+                        )}
+                        {visibleColumns.description && (
+                          <Table.Td>{candidate.description || ''}</Table.Td>
+                        )}
+                        {visibleColumns.available && (
+                          <Table.Td>
+                            {candidate.available_quantity ?? ''}
+                          </Table.Td>
+                        )}
+                        {visibleColumns.unitPrice && (
+                          <Table.Td>
+                            {formatUnitPrice(candidate.unit_price)}
+                          </Table.Td>
+                        )}
+                        {serverContext.show_score === true &&
+                          visibleColumns.score && (
+                            <Table.Td>{candidate.score ?? ''}</Table.Td>
+                          )}
+                      </Table.Tr>
+                    );
+                  })}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+          </Stack>
         </Paper>
       )}
 

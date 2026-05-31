@@ -846,13 +846,31 @@ function SupplierScoutMatcher({
       return;
     }
 
+    const supplierPk = Number(supplier);
+    const candidatesForSelectedSupplier = selectedCandidates.filter(
+      (candidate) =>
+        Number(
+          (
+            candidate as Candidate & {
+              _supplier_pk?: number | string;
+            }
+          )._supplier_pk ?? supplierPk
+        ) === supplierPk
+    );
+
+    if (candidatesForSelectedSupplier.length === 0) {
+      setIsError(true);
+      setStatusMessage('Selected candidates do not match the chosen supplier');
+      return;
+    }
+
     setApplying(true);
 
     try {
       const payload = {
         pk: serverContext.part_pk,
-        supplier: Number(supplier),
-        candidates: selectedCandidates
+        supplier: supplierPk,
+        candidates: candidatesForSelectedSupplier
       };
 
       const response = await context.api.post(serverContext.apply_url, payload);

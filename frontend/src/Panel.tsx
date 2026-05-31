@@ -12,6 +12,7 @@ import {
   Loader,
   NativeSelect,
   Paper,
+  Pill,
   ScrollArea,
   Stack,
   Table,
@@ -96,6 +97,78 @@ type ResyncResult = {
   cursor_after?: number;
 };
 
+type TokenPillSource =
+  | 'part-name'
+  | 'name-token'
+  | 'category'
+  | 'parameter'
+  | 'manufacturer-part'
+  | 'ipn'
+  | 'sku'
+  | 'manual';
+
+const TOKEN_PILL_META: Record<
+  TokenPillSource,
+  { label: string; color: string }
+> = {
+  'part-name': { label: 'Part name', color: 'pink' },
+  'name-token': { label: 'Name token', color: 'yellow' },
+  category: { label: 'Category', color: 'blue' },
+  parameter: { label: 'Parameter', color: 'teal' },
+  'manufacturer-part': { label: 'Manufacturer part', color: 'red' },
+  ipn: { label: 'IPN', color: 'violet' },
+  sku: { label: 'SKU', color: 'orange' },
+  manual: { label: 'Manual / other', color: 'gray' }
+};
+
+const TOKEN_PILL_PRIORITY: Record<TokenPillSource, number> = {
+  'manufacturer-part': 80,
+  ipn: 75,
+  sku: 70,
+  parameter: 65,
+  category: 60,
+  'part-name': 55,
+  'name-token': 50,
+  manual: 10
+};
+
+const QUERY_SOURCE_TO_PILL_SOURCE: Record<string, TokenPillSource> = {
+  manufacturer_part: 'manufacturer-part',
+  IPN: 'ipn',
+  SKU: 'sku',
+  parameter: 'parameter',
+  category: 'category',
+  name: 'name-token',
+  description: 'name-token'
+};
+
+function normalizeTokenKey(token: string): string {
+  return String(token || '').trim().toLowerCase();
+}
+
+function setTokenSource(
+  sourceByToken: Record<string, TokenPillSource>,
+  token: string,
+  source: TokenPillSource
+) {
+  const key = normalizeTokenKey(token);
+  if (!key) {
+    return;
+  }
+
+  const existing = sourceByToken[key];
+  if (!existing || TOKEN_PILL_PRIORITY[source] > TOKEN_PILL_PRIORITY[existing]) {
+    sourceByToken[key] = source;
+  }
+}
+
+function getPillSourceForTag(
+  tag: string,
+  sourceByToken: Record<string, TokenPillSource>
+): TokenPillSource {
+  return sourceByToken[normalizeTokenKey(tag)] || 'manual';
+}
+
 function formatUnitPrice(value: unknown): string {
   const numeric = Number(value);
   if (Number.isFinite(numeric)) {
@@ -116,9 +189,11 @@ function SupplierScoutMatcher({
 }) {
   const suppliers = serverContext.suppliers || [];
   const [queryTags, setQueryTags] = useState<string[]>(() =>
-    (serverContext.default_query || '')
-      .split(/\s+/)
-      .filter((t) => t.trim().length > 0)
+    dedupTokens(
+      (serverContext.default_query || '')
+        .split(/\s+/)
+        .filter((t) => t.trim().length > 0)
+    )
   );
   const [supplier, setSupplier] = useState<string>(
     suppliers[0] ? String(suppliers[0].pk) : ''
@@ -141,6 +216,9 @@ function SupplierScoutMatcher({
   const [tokenGroups, setTokenGroups] = useState<TokenGroups | null>(null);
   const [tokenDebugFetched, setTokenDebugFetched] = useState<boolean>(false);
   const [loadingTokens, setLoadingTokens] = useState<boolean>(false);
+  const [tagSourceByToken, setTagSourceByToken] = useState<
+    Record<string, TokenPillSource>
+  >({});
   const [includePartName, setIncludePartName] = useState<boolean>(true);
   const [includePartNameTokens, setIncludePartNameTokens] =
     useState<boolean>(true);
@@ -159,6 +237,18 @@ function SupplierScoutMatcher({
       selectedSkus.has(String(candidate.supplier_part_number || ''))
     );
   }, [candidates, selectedSkus]);
+
+  const activeTokenPillSources = useMemo(() => {
+    const sources = new Set<TokenPillSource>();
+
+    for (const tag of queryTags) {
+      sources.add(getPillSourceForTag(tag, tagSourceByToken));
+    }
+
+    return Array.from(sources).sort(
+      (left, right) => TOKEN_PILL_PRIORITY[right] - TOKEN_PILL_PRIORITY[left]
+    );
+  }, [queryTags, tagSourceByToken]);
 
   async function fetchRateStatus(supplierPk?: string) {
     if (!serverContext.rate_status_url) {
@@ -213,25 +303,60 @@ function SupplierScoutMatcher({
       const data = response?.data || {};
       const sources: TokenSourceEntry[] = data.debug?.token_sources || [];
       const queryDebug = data.debug?.query_debug || {};
+      const sourceByToken: Record<string, TokenPillSource> = {};
 
       const nameVals: string[] = [];
       const nameToks: string[] = [];
       const catToks: string[] = [];
       const paramToks: string[] = [];
 
+      const querySourceTokenMap = queryDebug.source_token_map || {};
+      for (const [sourceName, sourceTokens] of Object.entries(
+        querySourceTokenMap
+      )) {
+        const mappedSource = QUERY_SOURCE_TO_PILL_SOURCE[sourceName];
+        if (!mappedSource || !Array.isArray(sourceTokens)) {
+          continue;
+        }
+
+        for (const token of sourceTokens) {
+          setTokenSource(sourceByToken, String(token || ''), mappedSource);
+        }
+      }
+
       for (const src of sources) {
+        const mappedSource = QUERY_SOURCE_TO_PILL_SOURCE[src.source];
+
         if (src.source === 'name' || src.source === 'description') {
-          if (src.value?.trim()) nameVals.push(src.value.trim());
+          if (src.value?.trim()) {
+            nameVals.push(src.value.trim());
+            setTokenSource(sourceByToken, src.value.trim(), 'part-name');
+          }
           for (const t of src.tokens || []) {
-            if (t.trim()) nameToks.push(t);
+            if (t.trim()) {
+              nameToks.push(t);
+              setTokenSource(sourceByToken, t, 'name-token');
+            }
           }
         } else if (src.source === 'category') {
           for (const t of src.tokens || []) {
-            if (t.trim()) catToks.push(t);
+            if (t.trim()) {
+              catToks.push(t);
+              setTokenSource(sourceByToken, t, 'category');
+            }
           }
         } else if (src.source === 'parameter') {
           for (const t of src.tokens || []) {
-            if (t.trim()) paramToks.push(t);
+            if (t.trim()) {
+              paramToks.push(t);
+              setTokenSource(sourceByToken, t, 'parameter');
+            }
+          }
+        } else if (mappedSource) {
+          for (const t of src.tokens || []) {
+            if (t.trim()) {
+              setTokenSource(sourceByToken, t, mappedSource);
+            }
           }
         }
       }
@@ -243,6 +368,7 @@ function SupplierScoutMatcher({
         parameterTokens: dedupTokens(paramToks)
       };
       setTokenGroups(groups);
+      setTagSourceByToken(sourceByToken);
 
       const includeNames = queryDebug.include_name_tokens ?? false;
       setIncludePartName(includeNames);
@@ -252,7 +378,8 @@ function SupplierScoutMatcher({
 
       const finalTokens: string[] = queryDebug.final_query_tokens || [];
       if (finalTokens.length > 0) {
-        setQueryTags(finalTokens);
+        // Keep initial pills aligned with checkbox-based behavior by deduping.
+        setQueryTags(dedupTokens(finalTokens));
       }
     } catch {
       // Keep current queryTags on failure
@@ -691,12 +818,51 @@ function SupplierScoutMatcher({
               description='Each tag is sent as a search keyword. Add or remove tags manually.'
               value={queryTags}
               onChange={setQueryTags}
+              renderPill={({ value, onRemove, disabled, reorderProps }) => {
+                const pillValue = String(value || '');
+                const source = getPillSourceForTag(pillValue, tagSourceByToken);
+                const sourceMeta = TOKEN_PILL_META[source];
+
+                return (
+                  <Pill
+                    withRemoveButton={!disabled}
+                    onRemove={onRemove}
+                    style={{
+                      backgroundColor: `var(--mantine-color-${sourceMeta.color}-light)`,
+                      color: `var(--mantine-color-${sourceMeta.color}-8)`,
+                      border: `1px solid var(--mantine-color-${sourceMeta.color}-3)`
+                    }}
+                    {...reorderProps}
+                  >
+                    {pillValue}
+                  </Pill>
+                );
+              }}
               placeholder={
                 queryTags.length === 0 ? 'Type and press Enter to add tags' : ''
               }
               splitChars={[' ', ',']}
               clearable
             />
+            {queryTags.length > 0 && (
+              <Stack gap={4}>
+                <Text size='xs' c='dimmed'>
+                  Token source colours:
+                </Text>
+                <Group gap='xs'>
+                  {activeTokenPillSources.map((source) => (
+                    <Badge
+                      key={source}
+                      size='sm'
+                      variant='light'
+                      color={TOKEN_PILL_META[source].color}
+                    >
+                      {TOKEN_PILL_META[source].label}
+                    </Badge>
+                  ))}
+                </Group>
+              </Stack>
+            )}
           </Stack>
         </Paper>
       )}

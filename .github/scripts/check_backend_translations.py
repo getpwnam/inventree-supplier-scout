@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = ROOT / "supplier_scout"
 EXCLUDED = {
     "test_core_query_helpers.py",
+    "test_db_upsert_supplier_part.py",
     "test_mouser_adapter.py",
     "__init__.py",
 }

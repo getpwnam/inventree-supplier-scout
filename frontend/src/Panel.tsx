@@ -174,6 +174,29 @@ function getPillSourceForTag(
   return sourceByToken[normalizeTokenKey(tag)] || 'manual';
 }
 
+function deriveNameTokensFromValues(values: string[]): string[] {
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+
+  for (const value of values) {
+    const parts = String(value || '')
+      .split(/[^A-Za-z0-9]+/)
+      .map((part) => part.trim())
+      .filter((part) => part.length >= 2);
+
+    for (const part of parts) {
+      const key = part.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      tokens.push(part);
+    }
+  }
+
+  return tokens;
+}
+
 function formatUnitPrice(value: unknown): string {
   const numeric = Number(value);
   if (Number.isFinite(numeric)) {
@@ -366,22 +389,42 @@ function SupplierScoutMatcher({
         }
       }
 
+      const fallbackNameTokens = deriveNameTokensFromValues(nameVals);
+      const nameValueKeys = new Set(
+        nameVals.map((value) => normalizeTokenKey(value)).filter(Boolean)
+      );
+      const filteredNameTokens = dedupTokens([
+        ...nameToks,
+        ...fallbackNameTokens
+      ]).filter((token) => !nameValueKeys.has(normalizeTokenKey(token)));
+
       const groups: TokenGroups = {
         nameValues: nameVals,
-        nameTokens: dedupTokens(nameToks),
+        nameTokens: filteredNameTokens,
         categoryTokens: dedupTokens(catToks),
         parameterTokens: dedupTokens(paramToks)
       };
       setTokenGroups(groups);
       setTagSourceByToken(sourceByToken);
 
-      const includeNames = queryDebug.include_name_tokens ?? false;
-      setIncludePartName(false); // nameValues are never in final_query_tokens; start unchecked
-      setIncludePartNameTokens(includeNames);
-      setIncludeCategoryTokens(catToks.length > 0);
-      setIncludeParameterTokens(paramToks.length > 0);
-
       const finalTokens: string[] = queryDebug.final_query_tokens || [];
+      const activeQueryTokens = dedupTokens(
+        finalTokens.length > 0 ? finalTokens : queryTags
+      );
+      const activeTokenKeys = new Set(
+        activeQueryTokens
+          .map((token) => normalizeTokenKey(token))
+          .filter(Boolean)
+      );
+      const hasAnyActiveToken = (tokens: string[]) =>
+        tokens.some((token) => activeTokenKeys.has(normalizeTokenKey(token)));
+
+      // Keep checkbox state in sync with the currently displayed list.
+      setIncludePartName(hasAnyActiveToken(groups.nameValues));
+      setIncludePartNameTokens(hasAnyActiveToken(groups.nameTokens));
+      setIncludeCategoryTokens(hasAnyActiveToken(groups.categoryTokens));
+      setIncludeParameterTokens(hasAnyActiveToken(groups.parameterTokens));
+
       if (finalTokens.length > 0) {
         // Keep initial pills aligned with checkbox-based behavior by deduping.
         setQueryTags(dedupTokens(finalTokens));

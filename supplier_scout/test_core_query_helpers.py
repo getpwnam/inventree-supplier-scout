@@ -272,6 +272,10 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         self.assertEqual(SupplierScout.USER_SETTINGS["RANKING_STRATEGY"]["default"], "")
         self.assertEqual(SupplierScout.USER_SETTINGS["TOP_N_CANDIDATES"]["default"], "")
 
+    def test_supplier_adapters_include_digikey_and_mouser(self):
+        self.assertIn("digikey", SupplierScout.SUPPLIER_ADAPTERS)
+        self.assertIn("mouser", SupplierScout.SUPPLIER_ADAPTERS)
+
     def test_normalize_capacitance_token_variants(self):
         self.assertEqual(self.scout._normalize_capacitance_token("10u"), "10uF")
         self.assertEqual(self.scout._normalize_capacitance_token("4n7"), "4.7nF")

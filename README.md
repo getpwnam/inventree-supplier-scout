@@ -17,6 +17,7 @@
 
 | Supplier | Search | Scheduled Resync | Notes |
 |---|---|---|---|
+| **DigiKey** | ✅ | ✅ | Uses the shared supplier adapter flow with dedicated DigiKey settings and credentials |
 | **Mouser Electronics** | ✅ | ✅ | Part-number and keyword search; response caching; per-user API keys |
 
 Additional suppliers can be added by implementing a `BaseSupplierAdapter` subclass.
@@ -51,8 +52,8 @@ pip install -e .
 After activating the plugin, you must configure at least one supplier before you can search:
 
 1. Open **Settings → Plugins** and click on **Supplier Scout → Plugin Settings**.
-2. Set the **Mouser Supplier ID** (`MOUSER_PK`) to the primary key of your Mouser company record in InvenTree. If you have not added Mouser as a supplier yet, create it in **Purchasing → Suppliers** first.
-3. Set the **Mouser search API key** (`MOUSER_APIKEY_SEARCH`). Obtain a free API key from the [Mouser API portal](https://www.mouser.com/api-hub/).
+2. Set either **DigiKey Supplier ID** (`DIGIKEY_PK`) or **Mouser Supplier ID** (`MOUSER_PK`) to the primary key of your supplier company record in InvenTree.
+3. Set the corresponding supplier API key (`DIGIKEY_APIKEY_SEARCH` or `MOUSER_APIKEY_SEARCH`).
 4. Save. The *Supplier Match* action will now appear on every purchaseable part.
 
 ## Usage

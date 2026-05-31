@@ -36,6 +36,7 @@ from . import PLUGIN_VERSION
 from .adapters import build_supplier_settings
 from .adapters import build_supplier_schedule_settings
 from .adapters import build_supplier_user_settings
+from .digikey import DigikeySupplierAdapter
 from .mouser import MouserSupplierAdapter
 
 
@@ -63,6 +64,7 @@ class SupplierScout(
     ADMIN_SOURCE = "Settings.js:renderPluginSettings"
 
     SUPPLIER_ADAPTERS = {
+        "digikey": DigikeySupplierAdapter,
         "mouser": MouserSupplierAdapter,
     }
 

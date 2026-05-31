@@ -71,6 +71,13 @@ type TokenGroups = {
   parameterTokens: string[];
 };
 
+type TokenCheckboxState = {
+  includePartName: boolean;
+  includePartNameTokens: boolean;
+  includeCategoryTokens: boolean;
+  includeParameterTokens: boolean;
+};
+
 type SupplierRateStatus = {
   supplier_pk: number;
   supplier_key?: string;
@@ -278,6 +285,51 @@ function SupplierScoutMatcher({
     );
   }, [queryTags, tagSourceByToken]);
 
+  function getTokenCheckboxState(
+    tags: string[],
+    groups: TokenGroups | null
+  ): TokenCheckboxState {
+    if (!groups) {
+      return {
+        includePartName: false,
+        includePartNameTokens: false,
+        includeCategoryTokens: false,
+        includeParameterTokens: false
+      };
+    }
+
+    const activeTokenKeys = new Set(
+      dedupTokens(tags)
+        .map((token) => normalizeTokenKey(token))
+        .filter(Boolean)
+    );
+    const hasAnyActiveToken = (tokens: string[]) =>
+      tokens.some((token) => activeTokenKeys.has(normalizeTokenKey(token)));
+
+    return {
+      includePartName: hasAnyActiveToken(groups.nameValues),
+      includePartNameTokens: hasAnyActiveToken(groups.nameTokens),
+      includeCategoryTokens: hasAnyActiveToken(groups.categoryTokens),
+      includeParameterTokens: hasAnyActiveToken(groups.parameterTokens)
+    };
+  }
+
+  function applyTokenCheckboxState(state: TokenCheckboxState) {
+    setIncludePartName(state.includePartName);
+    setIncludePartNameTokens(state.includePartNameTokens);
+    setIncludeCategoryTokens(state.includeCategoryTokens);
+    setIncludeParameterTokens(state.includeParameterTokens);
+  }
+
+  function updateQueryTagsWithSync(
+    nextTags: string[],
+    groups: TokenGroups | null = tokenGroups
+  ) {
+    const deduped = dedupTokens(nextTags);
+    setQueryTags(deduped);
+    applyTokenCheckboxState(getTokenCheckboxState(deduped, groups));
+  }
+
   async function fetchRateStatus(supplierPk?: string) {
     if (!serverContext.rate_status_url) {
       return;
@@ -390,6 +442,9 @@ function SupplierScoutMatcher({
       }
 
       const fallbackNameTokens = deriveNameTokensFromValues(nameVals);
+      for (const token of fallbackNameTokens) {
+        setTokenSource(sourceByToken, token, 'name-token');
+      }
       const nameValueKeys = new Set(
         nameVals.map((value) => normalizeTokenKey(value)).filter(Boolean)
       );
@@ -408,26 +463,17 @@ function SupplierScoutMatcher({
       setTagSourceByToken(sourceByToken);
 
       const finalTokens: string[] = queryDebug.final_query_tokens || [];
-      const activeQueryTokens = dedupTokens(
-        finalTokens.length > 0 ? finalTokens : queryTags
+      const initialQueryTokens =
+        finalTokens.length > 0
+          ? dedupTokens(finalTokens)
+          : dedupTokens(queryTags);
+      applyTokenCheckboxState(
+        getTokenCheckboxState(initialQueryTokens, groups)
       );
-      const activeTokenKeys = new Set(
-        activeQueryTokens
-          .map((token) => normalizeTokenKey(token))
-          .filter(Boolean)
-      );
-      const hasAnyActiveToken = (tokens: string[]) =>
-        tokens.some((token) => activeTokenKeys.has(normalizeTokenKey(token)));
-
-      // Keep checkbox state in sync with the currently displayed list.
-      setIncludePartName(hasAnyActiveToken(groups.nameValues));
-      setIncludePartNameTokens(hasAnyActiveToken(groups.nameTokens));
-      setIncludeCategoryTokens(hasAnyActiveToken(groups.categoryTokens));
-      setIncludeParameterTokens(hasAnyActiveToken(groups.parameterTokens));
 
       if (finalTokens.length > 0) {
         // Keep initial pills aligned with checkbox-based behavior by deduping.
-        setQueryTags(dedupTokens(finalTokens));
+        setQueryTags(initialQueryTokens);
       }
     } catch {
       // Keep current queryTags on failure
@@ -865,7 +911,7 @@ function SupplierScoutMatcher({
               label='Search query tags'
               description='Each tag is sent as a search keyword. Add or remove tags manually.'
               value={queryTags}
-              onChange={setQueryTags}
+              onChange={(nextTags) => updateQueryTagsWithSync(nextTags)}
               disabled={loadingTokens}
               renderPill={({ value, onRemove, disabled, reorderProps }) => {
                 const pillValue = String(value || '');

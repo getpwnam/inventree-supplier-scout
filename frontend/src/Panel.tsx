@@ -54,6 +54,8 @@ type MatcherContext = {
   rate_status_url?: string;
   token_debug_url?: string;
   default_query?: string;
+  default_min_qty?: number;
+  default_max_qty?: number | null;
   part_pk: number;
   suppliers: Supplier[];
   top_n?: number;
@@ -205,11 +207,13 @@ function formatUnitPrice(value: unknown): string {
 function SupplierScoutMatcher({
   context,
   serverContext,
-  onClose
+  onClose,
+  modalId
 }: {
   context: InvenTreePluginContext;
   serverContext: MatcherContext;
   onClose?: () => void;
+  modalId?: string;
 }) {
   const suppliers = serverContext.suppliers || [];
   const [queryTags, setQueryTags] = useState<string[]>(() =>
@@ -228,8 +232,10 @@ function SupplierScoutMatcher({
   const [searching, setSearching] = useState<boolean>(false);
   const [applying, setApplying] = useState<boolean>(false);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [hasExpandedModal, setHasExpandedModal] = useState<boolean>(false);
   const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
   const [rateStatus, setRateStatus] = useState<SupplierRateStatus | null>(null);
+  const [rateStatuses, setRateStatuses] = useState<SupplierRateStatus[]>([]);
   const [loadingRateStatus, setLoadingRateStatus] = useState<boolean>(false);
   const [showApiUsage, setShowApiUsage] = useState<boolean>(false);
 
@@ -269,6 +275,23 @@ function SupplierScoutMatcher({
     return searchUrl.replace(/searchcandidates(?:\.(json))?$/, 'tokendebug$1');
   }, [serverContext.search_url, serverContext.token_debug_url]);
 
+  const defaultMinQty = useMemo(() => {
+    const value = Number(serverContext.default_min_qty);
+    return Number.isFinite(value) && value > 0 ? value : undefined;
+  }, [serverContext.default_min_qty]);
+
+  const defaultMaxQty = useMemo(() => {
+    const value = Number(serverContext.default_max_qty);
+    return Number.isFinite(value) && value > 0 ? value : undefined;
+  }, [serverContext.default_max_qty]);
+
+  const minQtyPlaceholder = defaultMinQty
+    ? `Min order qty (default ${defaultMinQty})`
+    : 'Min order qty';
+  const maxQtyPlaceholder = defaultMaxQty
+    ? `Max preferred qty (default ${defaultMaxQty})`
+    : 'Max preferred qty';
+
   const selectedCandidates = useMemo(() => {
     return candidates.filter((candidate) =>
       selectedSkus.has(String(candidate.supplier_part_number || ''))
@@ -286,6 +309,13 @@ function SupplierScoutMatcher({
       (left, right) => TOKEN_PILL_PRIORITY[right] - TOKEN_PILL_PRIORITY[left]
     );
   }, [queryTags, tagSourceByToken]);
+
+  const activeRateStatuses = useMemo(
+    () => rateStatuses.filter((status) => status.configured !== false),
+    [rateStatuses]
+  );
+
+  const allSuppliersSelected = supplier === '';
 
   function getTokenCheckboxState(
     tags: string[],
@@ -337,22 +367,43 @@ function SupplierScoutMatcher({
       return;
     }
 
-    const supplierValue = Number(supplierPk || supplier);
-    if (!Number.isFinite(supplierValue) || supplierValue <= 0) {
+    const selectedSupplier = String(supplierPk ?? supplier ?? '').trim();
+    const supplierValue = Number(selectedSupplier);
+
+    if (
+      selectedSupplier !== '' &&
+      (!Number.isFinite(supplierValue) || supplierValue <= 0)
+    ) {
+      setRateStatus(null);
+      setRateStatuses([]);
       return;
     }
 
     setLoadingRateStatus(true);
 
     try {
+      const query =
+        selectedSupplier === ''
+          ? ''
+          : `?supplier=${encodeURIComponent(selectedSupplier)}`;
       const response = await context.api.get(
-        `${serverContext.rate_status_url}?supplier=${supplierValue}`
+        `${serverContext.rate_status_url}${query}`
       );
       const data = response?.data || {};
-      const status = (data.suppliers || [])[0] || null;
-      setRateStatus(status);
+      const statuses: SupplierRateStatus[] = Array.isArray(data.suppliers)
+        ? data.suppliers
+        : [];
+
+      setRateStatuses(statuses);
+
+      if (selectedSupplier === '') {
+        setRateStatus(null);
+      } else {
+        setRateStatus(statuses[0] || null);
+      }
     } catch (error: any) {
       setRateStatus(null);
+      setRateStatuses([]);
       setIsError(true);
       setStatusMessage(
         error?.response?.data?.message ||
@@ -365,13 +416,21 @@ function SupplierScoutMatcher({
   }
 
   useEffect(() => {
-    if (!supplier) {
-      setRateStatus(null);
-      return;
-    }
     fetchRateStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supplier, serverContext.rate_status_url]);
+
+  useEffect(() => {
+    if (!modalId || hasExpandedModal || candidates.length === 0) {
+      return;
+    }
+
+    modals.updateModal({
+      modalId,
+      size: '90%'
+    });
+    setHasExpandedModal(true);
+  }, [modalId, hasExpandedModal, candidates.length]);
 
   useEffect(() => {
     if (showTokens && !tokenDebugFetched && tokenDebugUrl) {
@@ -530,6 +589,62 @@ function SupplierScoutMatcher({
   }
 
   function renderRateBadge() {
+    if (allSuppliersSelected) {
+      if (activeRateStatuses.length === 0) {
+        return (
+          <Badge variant='light' color='gray'>
+            API status unavailable
+          </Badge>
+        );
+      }
+
+      return (
+        <Stack gap={4}>
+          {activeRateStatuses.map((status) => {
+            const supplierName =
+              status.supplier_name || status.supplier_key || 'Supplier';
+            const dailyLimit = Number(status.daily_limit || 0);
+            const dailyCount = Number(status.daily_count || 0);
+            const dailyRemaining =
+              status.daily_remaining == null
+                ? null
+                : Number(status.daily_remaining);
+
+            let color: 'green' | 'yellow' | 'red' | 'blue' = 'blue';
+            if (dailyLimit > 0) {
+              const ratio = dailyCount / Math.max(1, dailyLimit);
+              if (dailyRemaining === 0) {
+                color = 'red';
+              } else if (ratio >= 0.9) {
+                color = 'yellow';
+              } else {
+                color = 'green';
+              }
+            }
+
+            const detailText =
+              dailyLimit > 0
+                ? `${dailyCount}/${dailyLimit} (${dailyRemaining} left)`
+                : `${dailyCount} (unlimited)`;
+
+            return (
+              <Group key={String(status.supplier_pk)} gap='xs' align='center'>
+                <Text size='xs' c='dimmed' style={{ minWidth: 110 }}>
+                  {supplierName}
+                </Text>
+                <Badge variant='light' color={color} size='sm'>
+                  {detailText}
+                </Badge>
+                <Badge variant='dot' color='blue' size='sm'>
+                  {`${status.rate_limit_per_second || 0}/sec`}
+                </Badge>
+              </Group>
+            );
+          })}
+        </Stack>
+      );
+    }
+
     if (!rateStatus) {
       return (
         <Badge variant='light' color='gray'>
@@ -591,6 +706,36 @@ function SupplierScoutMatcher({
   }
 
   function renderCompactRateBadge() {
+    if (allSuppliersSelected) {
+      if (activeRateStatuses.length === 0) {
+        return (
+          <Badge variant='light' color='gray' size='sm'>
+            No status
+          </Badge>
+        );
+      }
+
+      const aggregateDailyLimit = activeRateStatuses.reduce(
+        (total, status) => total + Math.max(Number(status.daily_limit || 0), 0),
+        0
+      );
+      const aggregateDailyCount = activeRateStatuses.reduce(
+        (total, status) => total + Math.max(Number(status.daily_count || 0), 0),
+        0
+      );
+
+      const aggregateText =
+        aggregateDailyLimit > 0
+          ? `${aggregateDailyCount}/${aggregateDailyLimit}`
+          : `${aggregateDailyCount} calls`;
+
+      return (
+        <Badge variant='light' color='blue' size='sm'>
+          {aggregateText}
+        </Badge>
+      );
+    }
+
     if (!rateStatus) {
       return (
         <Badge variant='light' color='gray' size='sm'>
@@ -643,9 +788,9 @@ function SupplierScoutMatcher({
     try {
       const payload = {
         pk: serverContext.part_pk,
-        supplier: Number(supplier),
         query: queryTags.join(' ').trim(),
         top_n: serverContext.top_n ?? 10,
+        ...(supplier && { supplier: Number(supplier) }),
         ...(minQty && { min_qty: Number(minQty) }),
         ...(maxQty && { max_qty: Number(maxQty) })
       };
@@ -684,6 +829,14 @@ function SupplierScoutMatcher({
     if (!serverContext.apply_url) {
       setIsError(true);
       setStatusMessage('Missing candidate apply URL in plugin context');
+      return;
+    }
+
+    if (!supplier) {
+      setIsError(true);
+      setStatusMessage(
+        'Select a specific supplier before applying selected candidates'
+      );
       return;
     }
 
@@ -791,17 +944,6 @@ function SupplierScoutMatcher({
         <Collapse expanded={showApiUsage}>
           <Stack gap='xs' mt='xs'>
             {renderRateBadge()}
-            <Button
-              variant='subtle'
-              size='xs'
-              onClick={(e) => {
-                e.stopPropagation();
-                fetchRateStatus();
-              }}
-              loading={loadingRateStatus}
-            >
-              Refresh
-            </Button>
           </Stack>
         </Collapse>
       </Paper>
@@ -815,7 +957,7 @@ function SupplierScoutMatcher({
             <Text size='xs' c='dimmed'>
               {showTokens ? '▼' : '▶'}
             </Text>
-            <Text size='sm' fw={600}>
+            <Text size='xs' fw={600}>
               Search Query
             </Text>
           </Group>
@@ -934,33 +1076,43 @@ function SupplierScoutMatcher({
         </Collapse>
       </Paper>
 
-      <Group gap='xs'>
+      <Group gap='xs' align='center' wrap='wrap'>
+        <Group gap={6} align='center'>
+          <Text size='xs' c='dimmed' fw={600}>
+            Search Quantity
+          </Text>
+          <Tooltip
+            multiline
+            w={300}
+            label='Optional quantity overrides for supplier price-break selection. Leave blank to use plugin defaults shown in each field.'
+          >
+            <Badge size='xs' variant='outline' color='gray'>
+              ?
+            </Badge>
+          </Tooltip>
+        </Group>
         <TextInput
           label='Min Qty'
           size='xs'
           value={minQty}
           onChange={(event) => setMinQty(event.currentTarget.value)}
-          placeholder='Min order qty'
+          placeholder={minQtyPlaceholder}
           type='number'
-          style={{ flex: 1 }}
+          style={{ width: 210 }}
         />
         <TextInput
           label='Max Qty'
           size='xs'
           value={maxQty}
           onChange={(event) => setMaxQty(event.currentTarget.value)}
-          placeholder='Max preferred qty'
+          placeholder={maxQtyPlaceholder}
           type='number'
-          style={{ flex: 1 }}
+          style={{ width: 210 }}
         />
       </Group>
 
-      <Paper withBorder p='xs' radius='md'>
-        {candidates.length === 0 ? (
-          <Text c='dimmed' size='sm'>
-            No candidates loaded yet.
-          </Text>
-        ) : (
+      {candidates.length > 0 && (
+        <Paper withBorder p='xs' radius='md'>
           <ScrollArea>
             <Table striped withTableBorder highlightOnHover>
               <Table.Thead>
@@ -1035,8 +1187,8 @@ function SupplierScoutMatcher({
               </Table.Tbody>
             </Table>
           </ScrollArea>
-        )}
-      </Paper>
+        </Paper>
+      )}
 
       <Group justify='flex-end'>
         {onClose && (
@@ -1047,13 +1199,15 @@ function SupplierScoutMatcher({
         <Button onClick={searchMatches} loading={searching}>
           Find Matches
         </Button>
-        <Button
-          onClick={applySelection}
-          loading={applying}
-          disabled={selectedCandidates.length === 0 || applying}
-        >
-          Add / Update Selected
-        </Button>
+        {candidates.length > 0 && (
+          <Button
+            onClick={applySelection}
+            loading={applying}
+            disabled={selectedCandidates.length === 0 || applying}
+          >
+            Add / Update Selected
+          </Button>
+        )}
       </Group>
     </Stack>
   );
@@ -1089,14 +1243,23 @@ export function getFeature({
   serverContext: MatcherContext;
   inventreeContext: InvenTreePluginContext;
 }) {
+  const modalId = `supplierscout-part-match-${Date.now()}`;
+
   modals.open({
+    modalId,
     title: serverContext?.title || 'Supplier Part Matching',
-    size: '90%',
+    size: '45%',
+    styles: {
+      content: {
+        transition: 'max-width 240ms ease'
+      }
+    },
     children: (
       <LocalizedComponent locale={inventreeContext.locale}>
         <SupplierScoutMatcher
           context={inventreeContext}
           serverContext={serverContext}
+          modalId={modalId}
           onClose={() => modals.closeAll()}
         />
       </LocalizedComponent>

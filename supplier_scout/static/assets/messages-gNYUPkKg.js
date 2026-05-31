@@ -1,0 +1,2 @@
+const a=JSON.parse('{"4Yq+pa":["Texte traduit"],"L8ZD4/":["Fallback locale is used if no translation is available"],"OPk5rd":["Texte traduit, fourni par un code personnalisé !"],"ehDjBq":["Les traductions sont chargées automatiquement."]}');export{a as messages};
+//# sourceMappingURL=messages-gNYUPkKg.js.map

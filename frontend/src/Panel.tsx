@@ -11,6 +11,7 @@ import {
   Collapse,
   Group,
   Loader,
+  MultiSelect,
   NativeSelect,
   Paper,
   Pill,
@@ -215,6 +216,50 @@ function formatUnitPrice(value: unknown): string {
   return value == null ? '' : String(value);
 }
 
+function formatDynamicColumnLabel(key: string): string {
+  return key
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatDynamicColumnValue(value: unknown): string {
+  if (value == null) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+const DYNAMIC_COLUMN_EXCLUDED_FIELDS = new Set<string>([
+  'supplier_part_number',
+  'manufacturer_part_number',
+  'description',
+  'available_quantity',
+  'unit_price',
+  'score',
+  'supplier_link',
+  'existing_supplier_part',
+  'existing_supplier_part_pk',
+  'action',
+  'price_breaks',
+  'datasheet_url',
+  'spec_attributes'
+]);
+
 function SupplierScoutMatcher({
   context,
   serverContext,
@@ -245,6 +290,9 @@ function SupplierScoutMatcher({
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [hasExpandedModal, setHasExpandedModal] = useState<boolean>(false);
   const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
+  const [selectedDynamicColumns, setSelectedDynamicColumns] = useState<
+    string[]
+  >([]);
   const [visibleColumns, setVisibleColumns] = useState<
     Record<ResultColumnKey, boolean>
   >({
@@ -338,6 +386,107 @@ function SupplierScoutMatcher({
   );
 
   const allSuppliersSelected = supplier === '';
+
+  const availableDynamicColumns = useMemo(() => {
+    const labels = new Map<string, string>();
+    const counts = new Map<string, number>();
+
+    for (const candidate of candidates) {
+      const candidateRecord = candidate as Record<string, unknown>;
+
+      for (const [fieldName, fieldValue] of Object.entries(candidateRecord)) {
+        if (fieldName === 'spec_attributes') {
+          if (
+            fieldValue &&
+            typeof fieldValue === 'object' &&
+            !Array.isArray(fieldValue)
+          ) {
+            const specRecord = fieldValue as Record<string, unknown>;
+
+            for (const [specName, specValue] of Object.entries(specRecord)) {
+              const textValue = formatDynamicColumnValue(specValue).trim();
+              if (!textValue) {
+                continue;
+              }
+
+              const key = `spec:${specName}`;
+              labels.set(key, specName);
+              counts.set(key, (counts.get(key) || 0) + 1);
+            }
+          }
+
+          continue;
+        }
+
+        if (
+          DYNAMIC_COLUMN_EXCLUDED_FIELDS.has(fieldName) ||
+          fieldName.startsWith('_')
+        ) {
+          continue;
+        }
+
+        const textValue = formatDynamicColumnValue(fieldValue).trim();
+        if (!textValue) {
+          continue;
+        }
+
+        const key = `field:${fieldName}`;
+        labels.set(key, formatDynamicColumnLabel(fieldName));
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+    }
+
+    return Array.from(labels.entries())
+      .sort((left, right) => {
+        const leftCount = counts.get(left[0]) || 0;
+        const rightCount = counts.get(right[0]) || 0;
+
+        if (rightCount !== leftCount) {
+          return rightCount - leftCount;
+        }
+
+        return left[1].localeCompare(right[1]);
+      })
+      .map(([value, label]) => ({
+        value,
+        label
+      }));
+  }, [candidates]);
+
+  const dynamicColumnLabelByKey = useMemo(
+    () =>
+      Object.fromEntries(
+        availableDynamicColumns.map((column) => [column.value, column.label])
+      ) as Record<string, string>,
+    [availableDynamicColumns]
+  );
+
+  useEffect(() => {
+    const availableKeys = new Set(
+      availableDynamicColumns.map((column) => column.value)
+    );
+
+    setSelectedDynamicColumns((previous) =>
+      previous.filter((columnKey) => availableKeys.has(columnKey))
+    );
+  }, [availableDynamicColumns]);
+
+  function getDynamicColumnCellValue(candidate: Candidate, columnKey: string) {
+    if (columnKey.startsWith('spec:')) {
+      const specName = columnKey.slice(5);
+      const specRecord = ((candidate as Record<string, unknown>)
+        .spec_attributes || {}) as Record<string, unknown>;
+      return formatDynamicColumnValue(specRecord[specName]);
+    }
+
+    if (columnKey.startsWith('field:')) {
+      const fieldName = columnKey.slice(6);
+      const candidateRecord = candidate as Record<string, unknown>;
+      return formatDynamicColumnValue(candidateRecord[fieldName]);
+    }
+
+    return '';
+  }
 
   function getTokenCheckboxState(
     tags: string[],
@@ -1267,6 +1416,18 @@ function SupplierScoutMatcher({
                   }
                 />
               )}
+              <MultiSelect
+                label='Additional Attributes'
+                size='xs'
+                placeholder='Choose extra columns'
+                data={availableDynamicColumns}
+                value={selectedDynamicColumns}
+                onChange={setSelectedDynamicColumns}
+                searchable
+                clearable
+                maxValues={5}
+                style={{ minWidth: 280, maxWidth: 420 }}
+              />
             </Group>
 
             <Text size='xs' c='dimmed'>
@@ -1290,6 +1451,11 @@ function SupplierScoutMatcher({
                     {visibleColumns.unitPrice && (
                       <Table.Th>Unit Price</Table.Th>
                     )}
+                    {selectedDynamicColumns.map((columnKey) => (
+                      <Table.Th key={columnKey}>
+                        {dynamicColumnLabelByKey[columnKey] || columnKey}
+                      </Table.Th>
+                    ))}
                     {serverContext.show_score === true &&
                       visibleColumns.score && <Table.Th>Score</Table.Th>}
                   </Table.Tr>
@@ -1371,6 +1537,11 @@ function SupplierScoutMatcher({
                             {formatUnitPrice(candidate.unit_price)}
                           </Table.Td>
                         )}
+                        {selectedDynamicColumns.map((columnKey) => (
+                          <Table.Td key={`${sku}-${columnKey}`}>
+                            {getDynamicColumnCellValue(candidate, columnKey)}
+                          </Table.Td>
+                        ))}
                         {serverContext.show_score === true &&
                           visibleColumns.score && (
                             <Table.Td>{candidate.score ?? ''}</Table.Td>

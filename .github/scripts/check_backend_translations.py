@@ -18,9 +18,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = ROOT / "supplier_scout"
 EXCLUDED = {
-    "test_core_query_helpers.py",
-    "test_db_upsert_supplier_part.py",
-    "test_mouser_adapter.py",
     "__init__.py",
 }
 
@@ -121,7 +118,7 @@ def check_file(path: Path) -> list[str]:
 
 def main() -> int:
     files = sorted(SRC_DIR.glob("*.py"))
-    files = [p for p in files if p.name not in EXCLUDED]
+    files = [p for p in files if p.name not in EXCLUDED and not p.name.startswith("test_")]
 
     all_issues: list[str] = []
     for file_path in files:

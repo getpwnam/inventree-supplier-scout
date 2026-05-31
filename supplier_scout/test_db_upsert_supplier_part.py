@@ -1,8 +1,16 @@
 """Database-backed tests for supplier part upsert behavior."""
 
-from InvenTree.unit_test import InvenTreeTestCase
-from company.models import Company, ManufacturerPart, SupplierPart, SupplierPriceBreak
-from part.models import Part
+import unittest
+
+try:
+    from InvenTree.unit_test import InvenTreeTestCase
+    from company.models import Company, ManufacturerPart, SupplierPart, SupplierPriceBreak
+    from part.models import Part
+
+    INVENTREE_TESTS_AVAILABLE = True
+except ModuleNotFoundError:
+    InvenTreeTestCase = unittest.TestCase
+    INVENTREE_TESTS_AVAILABLE = False
 
 from supplier_scout.core import SupplierScout
 
@@ -34,6 +42,7 @@ class _FakeAdapter:
         return str(candidate.get("datasheet") or "").strip()
 
 
+@unittest.skipUnless(INVENTREE_TESTS_AVAILABLE, "InvenTree test dependencies unavailable")
 class SupplierScoutDatabaseUpsertTests(InvenTreeTestCase):
     """Ensure supplier part upsert performs expected database writes."""
 

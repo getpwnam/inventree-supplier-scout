@@ -8,6 +8,7 @@ import {
   Badge,
   Button,
   Checkbox,
+  Collapse,
   Group,
   Loader,
   NativeSelect,
@@ -20,7 +21,8 @@ import {
   Text,
   TextInput,
   Title,
-  Tooltip
+  Tooltip,
+  UnstyledButton
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
@@ -89,19 +91,6 @@ type SupplierRateStatus = {
   daily_remaining?: number | null;
   daily_percent_used?: number;
   daily_reset_at?: string;
-};
-
-type ResyncResult = {
-  scope?: 'supplier' | 'part';
-  action?: 'resync' | 'reset_cursor';
-  processed?: number;
-  updated?: number;
-  created?: number;
-  skipped?: number;
-  failed?: number;
-  round_robin?: boolean;
-  cursor_before?: number;
-  cursor_after?: number;
 };
 
 type TokenPillSource =
@@ -230,9 +219,7 @@ function SupplierScoutMatcher({
         .filter((t) => t.trim().length > 0)
     )
   );
-  const [supplier, setSupplier] = useState<string>(
-    suppliers[0] ? String(suppliers[0].pk) : ''
-  );
+  const [supplier, setSupplier] = useState<string>('');
   const [minQty, setMinQty] = useState<string>('');
   const [maxQty, setMaxQty] = useState<string>('');
   const [showTokens, setShowTokens] = useState<boolean>(false);
@@ -240,12 +227,11 @@ function SupplierScoutMatcher({
   const [isError, setIsError] = useState<boolean>(false);
   const [searching, setSearching] = useState<boolean>(false);
   const [applying, setApplying] = useState<boolean>(false);
-  const [runningResync, setRunningResync] = useState<boolean>(false);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
   const [rateStatus, setRateStatus] = useState<SupplierRateStatus | null>(null);
   const [loadingRateStatus, setLoadingRateStatus] = useState<boolean>(false);
-  const [resyncResult, setResyncResult] = useState<ResyncResult | null>(null);
+  const [showApiUsage, setShowApiUsage] = useState<boolean>(false);
 
   // Token debug state
   const [tokenGroups, setTokenGroups] = useState<TokenGroups | null>(null);
@@ -263,7 +249,10 @@ function SupplierScoutMatcher({
     useState<boolean>(false);
 
   const supplierOptions = useMemo(
-    () => suppliers.map((s) => ({ label: s.name, value: String(s.pk) })),
+    () => [
+      { label: 'All Supported', value: '' },
+      ...suppliers.map((s) => ({ label: s.name, value: String(s.pk) }))
+    ],
     [suppliers]
   );
 
@@ -376,6 +365,10 @@ function SupplierScoutMatcher({
   }
 
   useEffect(() => {
+    if (!supplier) {
+      setRateStatus(null);
+      return;
+    }
     fetchRateStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supplier, serverContext.rate_status_url]);
@@ -597,67 +590,43 @@ function SupplierScoutMatcher({
     );
   }
 
-  async function runResync(scope: 'supplier' | 'part' | 'reset_cursor') {
-    if (!serverContext.run_resync_url) {
-      setIsError(true);
-      setStatusMessage('Missing resync URL in plugin context');
-      return;
+  function renderCompactRateBadge() {
+    if (!rateStatus) {
+      return (
+        <Badge variant='light' color='gray' size='sm'>
+          No status
+        </Badge>
+      );
     }
 
-    setRunningResync(true);
+    const dailyLimit = Number(rateStatus.daily_limit || 0);
+    const dailyCount = Number(rateStatus.daily_count || 0);
+    const dailyRemaining =
+      rateStatus.daily_remaining == null
+        ? null
+        : Number(rateStatus.daily_remaining);
 
-    try {
-      const payload: Record<string, number | string> = {
-        supplier: Number(supplier)
-      };
+    let badgeColor: 'green' | 'yellow' | 'red' | 'blue' = 'blue';
 
-      if (scope === 'part') {
-        payload.part_pk = Number(serverContext.part_pk);
-      } else if (scope === 'reset_cursor') {
-        payload.action = 'reset_cursor';
-      }
-
-      const response = await context.api.post(
-        serverContext.run_resync_url,
-        payload
-      );
-      const data = response?.data || {};
-
-      if (data.message !== 'OK') {
-        setIsError(true);
-        setStatusMessage(data.message || 'Manual resync failed');
-        return;
-      }
-
-      let summary = '';
-      if (scope === 'reset_cursor') {
-        summary = `Resync cursor reset: ${data.cursor_before ?? 0} -> ${data.cursor_after ?? 0}`;
+    if (dailyLimit > 0) {
+      const ratio = dailyCount / Math.max(1, dailyLimit);
+      if (dailyRemaining === 0) {
+        badgeColor = 'red';
+      } else if (ratio >= 0.9) {
+        badgeColor = 'yellow';
       } else {
-        summary = `Resync (${scope}) processed=${data.processed || 0}, updated=${data.updated || 0}, created=${data.created || 0}, skipped=${data.skipped || 0}, failed=${data.failed || 0}`;
+        badgeColor = 'green';
       }
-
-      setResyncResult(data as ResyncResult);
-
-      setIsError((data.failed || 0) > 0);
-      setStatusMessage(summary);
-
-      notifications.show({
-        title: 'Supplier Scout',
-        message: summary,
-        color: (data.failed || 0) > 0 ? 'yellow' : 'green'
-      });
-
-      await fetchRateStatus();
-    } catch (error: any) {
-      setIsError(true);
-      setStatusMessage(
-        error?.response?.data?.message ||
-          error?.message ||
-          'Manual resync failed'
-      );
-    } finally {
-      setRunningResync(false);
     }
+
+    const dailyText =
+      dailyLimit > 0 ? `${dailyCount}/${dailyLimit}` : `${dailyCount} calls`;
+
+    return (
+      <Badge variant='light' color={badgeColor} size='sm'>
+        {dailyText}
+      </Badge>
+    );
   }
 
   async function searchMatches() {
@@ -780,7 +749,7 @@ function SupplierScoutMatcher({
   }
 
   return (
-    <Stack gap='sm'>
+    <Stack gap='xs'>
       <Text c='dimmed' size='sm'>
         Search supplier matches, select candidates, then create or update
         supplier parts.
@@ -790,88 +759,69 @@ function SupplierScoutMatcher({
         <Alert color={isError ? 'red' : 'green'}>{statusMessage}</Alert>
       )}
 
-      <Group align='end' grow>
-        <NativeSelect
-          label='Supplier'
-          data={supplierOptions}
-          value={supplier}
-          onChange={(event) => setSupplier(event.currentTarget.value)}
-        />
-        <Button onClick={searchMatches} loading={searching}>
-          Find Matches
-        </Button>
-      </Group>
+      <NativeSelect
+        label='Supplier'
+        size='xs'
+        data={supplierOptions}
+        value={supplier}
+        onChange={(event) => setSupplier(event.currentTarget.value)}
+      />
 
       <Paper withBorder p='xs' radius='md'>
-        <Stack gap='xs'>
-          <Text size='sm' fw={600}>
-            API Usage
-          </Text>
-          {renderRateBadge()}
-          <Group gap='xs'>
+        <UnstyledButton
+          onClick={() => setShowApiUsage(!showApiUsage)}
+          style={{ width: '100%' }}
+        >
+          <Group justify='space-between' align='center'>
+            <Group gap='xs'>
+              <Text size='xs' c='dimmed'>
+                {showApiUsage ? '▼' : '▶'}
+              </Text>
+              <Text size='xs' fw={600}>
+                API Usage
+              </Text>
+            </Group>
+            {loadingRateStatus ? (
+              <Loader size='xs' />
+            ) : (
+              renderCompactRateBadge()
+            )}
+          </Group>
+        </UnstyledButton>
+        <Collapse expanded={showApiUsage}>
+          <Stack gap='xs' mt='xs'>
+            {renderRateBadge()}
             <Button
               variant='subtle'
               size='xs'
-              onClick={() => fetchRateStatus()}
+              onClick={(e) => {
+                e.stopPropagation();
+                fetchRateStatus();
+              }}
               loading={loadingRateStatus}
             >
-              Refresh API Usage
+              Refresh
             </Button>
-            <Button
-              variant='light'
-              size='xs'
-              onClick={() => runResync('part')}
-              loading={runningResync}
-            >
-              Resync This Part
-            </Button>
-            <Button
-              variant='light'
-              size='xs'
-              onClick={() => runResync('supplier')}
-              loading={runningResync}
-            >
-              Resync Supplier Batch
-            </Button>
-            <Tooltip label='Admin only: reset supplier round-robin cursor to first supplier part'>
-              <Button
-                variant='outline'
-                color='orange'
-                size='xs'
-                onClick={() => runResync('reset_cursor')}
-                loading={runningResync}
-              >
-                Reset Supplier Cursor
-              </Button>
-            </Tooltip>
-          </Group>
-        </Stack>
+          </Stack>
+        </Collapse>
       </Paper>
 
-      {resyncResult && (
-        <Paper withBorder p='xs' radius='md'>
-          <Group justify='space-between'>
-            <Text size='sm' fw={600}>
-              Latest Resync
-            </Text>
+      <Paper withBorder p='xs' radius='md'>
+        <UnstyledButton
+          onClick={() => setShowTokens(!showTokens)}
+          style={{ width: '100%' }}
+        >
+          <Group gap='xs'>
             <Text size='xs' c='dimmed'>
-              Scope: {resyncResult.scope || '-'}
+              {showTokens ? '▼' : '▶'}
+            </Text>
+            <Text size='sm' fw={600}>
+              Search Query
             </Text>
           </Group>
-          <Text size='sm'>
-            {resyncResult.action === 'reset_cursor'
-              ? `Cursor reset ${resyncResult.cursor_before ?? 0} -> ${resyncResult.cursor_after ?? 0}`
-              : `Cursor ${resyncResult.cursor_before ?? 0} -> ${resyncResult.cursor_after ?? 0} (${resyncResult.round_robin ? 'round-robin' : 'manual'})`}
-          </Text>
-        </Paper>
-      )}
-
-      {showTokens && (
-        <Paper withBorder p='md' radius='md' mb='md'>
-          <Stack gap='sm'>
-            <Text size='sm' fw={600}>
-              Search Query Tokens
-            </Text>
+        </UnstyledButton>
+        <Collapse expanded={showTokens}>
+          <Stack gap='sm' mt='xs'>
             {loadingTokens && (
               <Group gap='xs'>
                 <Loader size='xs' />
@@ -981,36 +931,31 @@ function SupplierScoutMatcher({
               </Stack>
             )}
           </Stack>
-        </Paper>
-      )}
+        </Collapse>
+      </Paper>
 
-      <Button
-        variant='subtle'
-        size='xs'
-        onClick={() => setShowTokens(!showTokens)}
-        mb='sm'
-      >
-        {showTokens ? 'Hide' : 'Show'} Search Query
-      </Button>
-
-      <Group grow>
+      <Group gap='xs'>
         <TextInput
-          label='Min Quantity (optional)'
+          label='Min Qty'
+          size='xs'
           value={minQty}
           onChange={(event) => setMinQty(event.currentTarget.value)}
-          placeholder='Minimum order quantity'
+          placeholder='Min order qty'
           type='number'
+          style={{ flex: 1 }}
         />
         <TextInput
-          label='Max Quantity (optional)'
+          label='Max Qty'
+          size='xs'
           value={maxQty}
           onChange={(event) => setMaxQty(event.currentTarget.value)}
-          placeholder='Maximum preferred quantity'
+          placeholder='Max preferred qty'
           type='number'
+          style={{ flex: 1 }}
         />
       </Group>
 
-      <Paper withBorder p='sm' radius='md'>
+      <Paper withBorder p='xs' radius='md'>
         {candidates.length === 0 ? (
           <Text c='dimmed' size='sm'>
             No candidates loaded yet.
@@ -1099,6 +1044,9 @@ function SupplierScoutMatcher({
             Cancel
           </Button>
         )}
+        <Button onClick={searchMatches} loading={searching}>
+          Find Matches
+        </Button>
         <Button
           onClick={applySelection}
           loading={applying}

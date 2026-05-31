@@ -1640,14 +1640,14 @@ class SupplierScout(
         return adapter.get_max_candidates(default=default)
 
     def _supplier_metric_key(self, supplier_key, suffix):
-        key = re.sub(r"[^A-Za-z0-9]+", "_", str(supplier_key or "").upper()).strip(
-            "_"
-        )
+        key = re.sub(r"[^A-Za-z0-9]+", "_", str(supplier_key or "").upper()).strip("_")
         return f"{key}_{suffix}"
 
     def _supplier_metric_int(self, supplier_key, suffix, default=0):
         key = self._supplier_metric_key(supplier_key, suffix)
-        return self._to_int_from_string(self.get_setting(key, backup_value=default), default=default)
+        return self._to_int_from_string(
+            self.get_setting(key, backup_value=default), default=default
+        )
 
     def _increment_supplier_metric(self, supplier_key, suffix, amount=1):
         amount = int(amount or 0)
@@ -1657,7 +1657,9 @@ class SupplierScout(
 
     def _record_supplier_query_metrics(self, supplier_key, response):
         self._increment_supplier_metric(supplier_key, "QUERY_TOTAL", amount=1)
-        self.set_setting(self._supplier_metric_key(supplier_key, "QUERY_LAST_TS"), int(time.time()))
+        self.set_setting(
+            self._supplier_metric_key(supplier_key, "QUERY_LAST_TS"), int(time.time())
+        )
 
         status = str((response or {}).get("error_status") or "").strip().upper()
         candidates = len((response or {}).get("candidates", []) or [])
@@ -1674,13 +1676,21 @@ class SupplierScout(
 
     def _get_supplier_query_metrics(self, supplier_key):
         return {
-            "total_queries": self._supplier_metric_int(supplier_key, "QUERY_TOTAL", default=0),
-            "ok_queries": self._supplier_metric_int(supplier_key, "QUERY_OK", default=0),
-            "error_queries": self._supplier_metric_int(supplier_key, "QUERY_ERROR", default=0),
+            "total_queries": self._supplier_metric_int(
+                supplier_key, "QUERY_TOTAL", default=0
+            ),
+            "ok_queries": self._supplier_metric_int(
+                supplier_key, "QUERY_OK", default=0
+            ),
+            "error_queries": self._supplier_metric_int(
+                supplier_key, "QUERY_ERROR", default=0
+            ),
             "total_candidates_returned": self._supplier_metric_int(
                 supplier_key, "QUERY_CANDIDATE_TOTAL", default=0
             ),
-            "last_query_ts": self._supplier_metric_int(supplier_key, "QUERY_LAST_TS", default=0),
+            "last_query_ts": self._supplier_metric_int(
+                supplier_key, "QUERY_LAST_TS", default=0
+            ),
         }
 
     def _get_dashboard_metrics_payload(self):
@@ -1709,42 +1719,48 @@ class SupplierScout(
         }
 
     def _get_resync_last_attempt_setting_key(self, supplier_key):
-        key = re.sub(r"[^A-Za-z0-9]+", "_", str(supplier_key or "").upper()).strip(
-            "_"
-        )
+        key = re.sub(r"[^A-Za-z0-9]+", "_", str(supplier_key or "").upper()).strip("_")
         return f"{key}_RESYNC_LAST_ATTEMPT_TS"
 
     def _get_resync_last_success_setting_key(self, supplier_key):
-        key = re.sub(r"[^A-Za-z0-9]+", "_", str(supplier_key or "").upper()).strip(
-            "_"
-        )
+        key = re.sub(r"[^A-Za-z0-9]+", "_", str(supplier_key or "").upper()).strip("_")
         return f"{key}_RESYNC_LAST_SUCCESS_TS"
 
     def _get_resync_cursor_setting_key(self, supplier_key):
-        key = re.sub(r"[^A-Za-z0-9]+", "_", str(supplier_key or "").upper()).strip(
-            "_"
-        )
+        key = re.sub(r"[^A-Za-z0-9]+", "_", str(supplier_key or "").upper()).strip("_")
         return f"{key}_RESYNC_CURSOR_PK"
 
     def _get_resync_last_success_timestamp(self, supplier_key):
         key = self._get_resync_last_success_setting_key(supplier_key)
-        return self._to_int_from_string(self.get_setting(key, backup_value=0), default=0)
+        return self._to_int_from_string(
+            self.get_setting(key, backup_value=0), default=0
+        )
 
     def _set_resync_attempt_timestamp(self, supplier_key, ts):
-        self.set_setting(self._get_resync_last_attempt_setting_key(supplier_key), int(ts))
+        self.set_setting(
+            self._get_resync_last_attempt_setting_key(supplier_key), int(ts)
+        )
 
     def _set_resync_success_timestamp(self, supplier_key, ts):
-        self.set_setting(self._get_resync_last_success_setting_key(supplier_key), int(ts))
+        self.set_setting(
+            self._get_resync_last_success_setting_key(supplier_key), int(ts)
+        )
 
     def _get_resync_cursor_pk(self, supplier_key):
         key = self._get_resync_cursor_setting_key(supplier_key)
-        return self._to_int_from_string(self.get_setting(key, backup_value=0), default=0)
+        return self._to_int_from_string(
+            self.get_setting(key, backup_value=0), default=0
+        )
 
     def _set_resync_cursor_pk(self, supplier_key, pk):
-        self.set_setting(self._get_resync_cursor_setting_key(supplier_key), int(pk or 0))
+        self.set_setting(
+            self._get_resync_cursor_setting_key(supplier_key), int(pk or 0)
+        )
 
     def _is_supplier_resync_due(self, adapter, now_ts):
-        interval_seconds = max(1, adapter.get_resync_interval_minutes(default=1440)) * 60
+        interval_seconds = (
+            max(1, adapter.get_resync_interval_minutes(default=1440)) * 60
+        )
         last_success = self._get_resync_last_success_timestamp(adapter.key)
 
         if last_success <= 0:
@@ -1757,14 +1773,20 @@ class SupplierScout(
         mpn_target = ""
         manufacturer_part = getattr(supplier_part, "manufacturer_part", None)
         if manufacturer_part is not None:
-            mpn_target = str(getattr(manufacturer_part, "MPN", "") or "").strip().lower()
+            mpn_target = (
+                str(getattr(manufacturer_part, "MPN", "") or "").strip().lower()
+            )
 
-        normalized = [adapter.normalize_candidate(candidate) for candidate in (candidates or [])]
+        normalized = [
+            adapter.normalize_candidate(candidate) for candidate in (candidates or [])
+        ]
 
         if sku_target:
             for candidate in normalized:
                 if (
-                    adapter.get_candidate_supplier_part_number(candidate).strip().lower()
+                    adapter.get_candidate_supplier_part_number(candidate)
+                    .strip()
+                    .lower()
                     == sku_target
                 ):
                     return candidate
@@ -1902,7 +1924,9 @@ class SupplierScout(
             selected["_supplier_key"] = registration.get("key")
             selected["_supplier_pk"] = supplier_pk
 
-            upsert_result = self._upsert_supplier_part_candidate(part, supplier, selected)
+            upsert_result = self._upsert_supplier_part_candidate(
+                part, supplier, selected
+            )
             status = str(upsert_result.get("status") or "").lower()
             if status == "updated":
                 summary["updated"] += 1
@@ -2060,7 +2084,9 @@ class SupplierScout(
         except Exception:
             return JsonResponse({"message": "Invalid supplier id"}, status=400)
 
-        return JsonResponse(self._get_rate_limit_status_payload(supplier_pk=supplier_pk))
+        return JsonResponse(
+            self._get_rate_limit_status_payload(supplier_pk=supplier_pk)
+        )
 
     def run_resync(self, request):
         data = self._decode_json_body(request)
@@ -2098,8 +2124,7 @@ class SupplierScout(
         if action == "reset_cursor":
             user = getattr(request, "user", None)
             is_admin = bool(
-                getattr(user, "is_superuser", False)
-                or getattr(user, "is_staff", False)
+                getattr(user, "is_superuser", False) or getattr(user, "is_staff", False)
             )
 
             if not is_admin:

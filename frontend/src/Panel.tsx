@@ -143,7 +143,9 @@ const QUERY_SOURCE_TO_PILL_SOURCE: Record<string, TokenPillSource> = {
 };
 
 function normalizeTokenKey(token: string): string {
-  return String(token || '').trim().toLowerCase();
+  return String(token || '')
+    .trim()
+    .toLowerCase();
 }
 
 function setTokenSource(
@@ -157,7 +159,10 @@ function setTokenSource(
   }
 
   const existing = sourceByToken[key];
-  if (!existing || TOKEN_PILL_PRIORITY[source] > TOKEN_PILL_PRIORITY[existing]) {
+  if (
+    !existing ||
+    TOKEN_PILL_PRIORITY[source] > TOKEN_PILL_PRIORITY[existing]
+  ) {
     sourceByToken[key] = source;
   }
 }

@@ -172,12 +172,16 @@ class BaseSupplierAdapter:
             window_count_key = self._runtime_setting_key("API_SECOND_WINDOW_COUNT")
 
             try:
-                window_start = float(self.get_setting(window_start_key, backup_value=0) or 0)
+                window_start = float(
+                    self.get_setting(window_start_key, backup_value=0) or 0
+                )
             except Exception:
                 window_start = 0.0
 
             try:
-                window_count = int(self.get_setting(window_count_key, backup_value=0) or 0)
+                window_count = int(
+                    self.get_setting(window_count_key, backup_value=0) or 0
+                )
             except Exception:
                 window_count = 0
 
@@ -207,7 +211,9 @@ class BaseSupplierAdapter:
             saved_date = str(self.get_setting(daily_date_key, backup_value=today) or "")
 
             try:
-                daily_count = int(self.get_setting(daily_count_key, backup_value=0) or 0)
+                daily_count = int(
+                    self.get_setting(daily_count_key, backup_value=0) or 0
+                )
             except Exception:
                 daily_count = 0
 
@@ -440,8 +446,7 @@ def build_supplier_schedule_settings(adapter_classes):
             "default": 1440,
         }
         settings[batch_size_key] = {
-            "name": _("%(supplier)s resync batch size")
-            % {"supplier": supplier_name},
+            "name": _("%(supplier)s resync batch size") % {"supplier": supplier_name},
             "description": _(
                 "Maximum number of existing %(supplier)s supplier parts to process per scheduled run"
             )
@@ -460,8 +465,7 @@ def build_supplier_schedule_settings(adapter_classes):
             "default": default_rate,
         }
         settings[api_daily_limit_key] = {
-            "name": _("%(supplier)s API calls per day")
-            % {"supplier": supplier_name},
+            "name": _("%(supplier)s API calls per day") % {"supplier": supplier_name},
             "description": _(
                 "Maximum %(supplier)s API requests per day (0 = unlimited)"
             )

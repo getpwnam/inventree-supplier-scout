@@ -3,6 +3,7 @@
 import sys
 import types
 import unittest
+from unittest.mock import MagicMock
 
 
 def _install_inventree_stubs():
@@ -68,21 +69,84 @@ class TestDigikeySupplierAdapter(unittest.TestCase):
             {"key": "digikey", "name": "DigiKey", "pk": 42},
         )
 
-    def test_credentials_lookup_prefers_user_setting_then_global(self):
+    def test_credentials_lookup_prefers_user_settings_then_global(self):
         adapter = DigikeySupplierAdapter(
             DummyPlugin(
-                settings={"DIGIKEY_APIKEY_SEARCH": "global-key"},
-                user_settings={"DIGIKEY_APIKEY_SEARCH": "user-key"},
+                settings={
+                    "DIGIKEY_CLIENT_ID": "global-client-id",
+                    "DIGIKEY_CLIENT_SECRET": "global-client-secret",
+                },
+                user_settings={
+                    "DIGIKEY_CLIENT_ID": "user-client-id",
+                    "DIGIKEY_CLIENT_SECRET": "user-client-secret",
+                },
             )
         )
-        self.assertEqual(adapter._get_search_api_key(user=object()), "user-key")
+        self.assertEqual(adapter._get_client_id(user=object()), "user-client-id")
+        self.assertEqual(
+            adapter._get_client_secret(user=object()), "user-client-secret"
+        )
 
-        adapter_without_user_key = DigikeySupplierAdapter(
-            DummyPlugin(settings={"DIGIKEY_APIKEY_SEARCH": "global-key"})
+        adapter_without_user_override = DigikeySupplierAdapter(
+            DummyPlugin(
+                settings={
+                    "DIGIKEY_CLIENT_ID": "global-client-id",
+                    "DIGIKEY_CLIENT_SECRET": "global-client-secret",
+                }
+            )
         )
         self.assertEqual(
-            adapter_without_user_key._get_search_api_key(user=object()),
-            "global-key",
+            adapter_without_user_override._get_client_id(user=object()),
+            "global-client-id",
+        )
+        self.assertEqual(
+            adapter_without_user_override._get_client_secret(user=object()),
+            "global-client-secret",
+        )
+
+    def test_has_search_credentials_requires_both_client_id_and_secret(self):
+        adapter = DigikeySupplierAdapter(
+            DummyPlugin(
+                settings={
+                    "DIGIKEY_CLIENT_ID": "client-id",
+                    "DIGIKEY_CLIENT_SECRET": "client-secret",
+                }
+            )
+        )
+        self.assertTrue(adapter.has_search_credentials())
+
+        missing_secret = DigikeySupplierAdapter(
+            DummyPlugin(settings={"DIGIKEY_CLIENT_ID": "client-id"})
+        )
+        self.assertFalse(missing_secret.has_search_credentials())
+
+        missing_client_id = DigikeySupplierAdapter(
+            DummyPlugin(settings={"DIGIKEY_CLIENT_SECRET": "client-secret"})
+        )
+        self.assertFalse(missing_client_id.has_search_credentials())
+
+    def test_post_uses_oauth_token_and_client_id_header(self):
+        adapter = DigikeySupplierAdapter(
+            DummyPlugin(
+                settings={
+                    "DIGIKEY_CLIENT_ID": "global-client-id",
+                    "DIGIKEY_CLIENT_SECRET": "global-client-secret",
+                }
+            )
+        )
+        adapter.transport.api_call = MagicMock(return_value=MagicMock())
+        adapter._get_oauth_access_token = MagicMock(return_value="access-token")
+
+        adapter._post("https://api.digikey.com/services/partsearch/v3/keywordsearch", {})
+
+        _, kwargs = adapter.transport.api_call.call_args
+        self.assertEqual(
+            kwargs["headers"]["Authorization"],
+            "Bearer " + "access-token",
+        )
+        self.assertEqual(
+            kwargs["headers"]["X-DIGIKEY-Client-Id"],
+            "global-client-id",
         )
 
 

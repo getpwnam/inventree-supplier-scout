@@ -1,8 +1,15 @@
-from plugin.mixins import APICallMixin
+import json
+import logging
 import re
 import time
 from datetime import datetime
 from datetime import timedelta
+from urllib.parse import parse_qsl
+from urllib.parse import urlencode
+from urllib.parse import urlsplit
+from urllib.parse import urlunsplit
+
+from plugin.mixins import APICallMixin
 
 try:
     from django.utils.translation import gettext_lazy as _  # type: ignore[import-not-found]
@@ -12,11 +19,24 @@ except Exception:  # pragma: no cover - fallback for isolated unit tests
         return value
 
 
+logger = logging.getLogger(__name__)
+
+
 class SupplierAPIClient(APICallMixin):
     """APICallMixin wrapper for supplier-specific HTTP transports."""
 
     API_URL_SETTING = "_SUPPLIER_API_URL"
     API_TOKEN_SETTING = None
+    SENSITIVE_DEBUG_KEYS = {
+        "api_key",
+        "apikey",
+        "authorization",
+        "token",
+        "access_token",
+        "refresh_token",
+        "password",
+        "secret",
+    }
 
     def __init__(self, plugin, base_url, headers=None):
         self.plugin = plugin
@@ -33,6 +53,108 @@ class SupplierAPIClient(APICallMixin):
 
     def get_setting(self, key, backup_value=None):
         return self.plugin.get_setting(key, backup_value=backup_value)
+
+    def _debug_logging_enabled(self):
+        try:
+            from django.conf import settings  # type: ignore[import-not-found]
+        except Exception:
+            return False
+
+        return bool(getattr(settings, "DEBUG", False))
+
+    def _is_sensitive_debug_key(self, key):
+        key_text = str(key or "").strip().lower().replace("-", "_")
+        return key_text in self.SENSITIVE_DEBUG_KEYS
+
+    def _sanitize_debug_value(self, value, key=None):
+        if self._is_sensitive_debug_key(key):
+            return "***"
+
+        if isinstance(value, dict):
+            return {
+                entry_key: self._sanitize_debug_value(entry_value, key=entry_key)
+                for entry_key, entry_value in value.items()
+            }
+
+        if isinstance(value, list):
+            return [self._sanitize_debug_value(entry) for entry in value]
+
+        if isinstance(value, tuple):
+            return tuple(self._sanitize_debug_value(entry) for entry in value)
+
+        return value
+
+    def _sanitize_debug_url(self, url):
+        url_text = str(url or "")
+        try:
+            parsed = urlsplit(url_text)
+            query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+            sanitized_pairs = []
+
+            for key, value in query_pairs:
+                if self._is_sensitive_debug_key(key):
+                    sanitized_pairs.append((key, "***"))
+                else:
+                    sanitized_pairs.append((key, value))
+
+            return urlunsplit((
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                urlencode(sanitized_pairs, doseq=True, safe="*"),
+                parsed.fragment,
+            ))
+        except Exception:
+            return url_text
+
+    def _format_debug_value(self, value, key=None):
+        sanitized = self._sanitize_debug_value(value, key=key)
+        try:
+            return json.dumps(sanitized, ensure_ascii=True, sort_keys=True)
+        except Exception:
+            return str(sanitized)
+
+    def api_call(self, url, *args, **kwargs):
+        method = str(kwargs.get("method") or "GET").upper()
+        sanitized_url = self._sanitize_debug_url(url)
+        started_at = time.monotonic()
+        debug_logging = self._debug_logging_enabled()
+
+        if debug_logging:
+            logger.debug(
+                "Supplier API request method=%s url=%s headers=%s payload=%s",
+                method,
+                sanitized_url,
+                self._format_debug_value(kwargs.get("headers") or {}, key="headers"),
+                self._format_debug_value(
+                    kwargs.get("json", kwargs.get("data")),
+                    key="payload",
+                ),
+            )
+
+        try:
+            response = APICallMixin.api_call(self, url, *args, **kwargs)
+        except Exception as exc:
+            if debug_logging:
+                logger.debug(
+                    "Supplier API error method=%s url=%s duration_ms=%s error=%s",
+                    method,
+                    sanitized_url,
+                    round((time.monotonic() - started_at) * 1000, 2),
+                    f"{type(exc).__name__}: {exc}",
+                )
+            raise
+
+        if debug_logging:
+            logger.debug(
+                "Supplier API response method=%s url=%s status=%s duration_ms=%s",
+                method,
+                sanitized_url,
+                getattr(response, "status_code", None),
+                round((time.monotonic() - started_at) * 1000, 2),
+            )
+
+        return response
 
 
 class BaseSupplierAdapter:

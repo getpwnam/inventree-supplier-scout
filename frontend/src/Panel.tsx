@@ -267,6 +267,19 @@ function SupplierScoutMatcher({
     [suppliers]
   );
 
+  const tokenDebugUrl = useMemo(() => {
+    if (serverContext.token_debug_url) {
+      return serverContext.token_debug_url;
+    }
+
+    const searchUrl = String(serverContext.search_url || '').trim();
+    if (!searchUrl) {
+      return '';
+    }
+
+    return searchUrl.replace(/searchcandidates(?:\.(json))?$/, 'tokendebug$1');
+  }, [serverContext.search_url, serverContext.token_debug_url]);
+
   const selectedCandidates = useMemo(() => {
     return candidates.filter((candidate) =>
       selectedSkus.has(String(candidate.supplier_part_number || ''))
@@ -368,7 +381,7 @@ function SupplierScoutMatcher({
   }, [supplier, serverContext.rate_status_url]);
 
   useEffect(() => {
-    if (showTokens && !tokenDebugFetched && serverContext.token_debug_url) {
+    if (showTokens && !tokenDebugFetched && tokenDebugUrl) {
       fetchTokenDebug();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -377,8 +390,12 @@ function SupplierScoutMatcher({
   async function fetchTokenDebug() {
     setLoadingTokens(true);
     try {
+      if (!tokenDebugUrl) {
+        throw new Error('Token debug endpoint unavailable in plugin context');
+      }
+
       const response = await context.api.get(
-        `${serverContext.token_debug_url}?pk=${serverContext.part_pk}`
+        `${tokenDebugUrl}?pk=${serverContext.part_pk}`
       );
       const data = response?.data || {};
       const sources: TokenSourceEntry[] = data.debug?.token_sources || [];
@@ -475,8 +492,13 @@ function SupplierScoutMatcher({
         // Keep initial pills aligned with checkbox-based behavior by deduping.
         setQueryTags(initialQueryTokens);
       }
-    } catch {
-      // Keep current queryTags on failure
+    } catch (error: any) {
+      setIsError(true);
+      setStatusMessage(
+        error?.response?.data?.message ||
+          error?.message ||
+          'Could not load query token metadata. Check plugin backend sync/restart.'
+      );
     } finally {
       setTokenDebugFetched(true);
       setLoadingTokens(false);

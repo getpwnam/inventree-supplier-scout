@@ -2325,7 +2325,7 @@ class SupplierScout(
             "key": "supplierscout-part-match-action",
             "title": "Supplier Match",
             "icon": "ti:search",
-            "source": self.plugin_static_file("Panel.js:getFeature?v=20260531i"),
+            "source": self.plugin_static_file("Panel.js:getFeature?v=20260531j"),
             "context": {
                 "title": "Supplier Part Matching",
                 "search_url": f"/{self.base_url}searchcandidates",

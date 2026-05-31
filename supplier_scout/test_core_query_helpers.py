@@ -557,6 +557,174 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         self.assertEqual(payload["suppliers"][0]["daily_count"], 42)
         self.assertTrue(payload["suppliers"][0]["configured"])
 
+    def test_search_candidates_all_suppliers_records_supplier_failures(self):
+        class FakePartManager:
+            def filter(self, **kwargs):
+                del kwargs
+                return self
+
+            def first(self):
+                return object()
+
+        class FakeAdapter:
+            def normalize_candidate(self, candidate):
+                return dict(candidate)
+
+            def get_candidate_supplier_part_number(self, candidate):
+                return str(candidate.get("supplier_part_number") or "")
+
+        from supplier_scout import core as core_module
+
+        original_part_objects = core_module.Part.objects
+        try:
+            core_module.Part.objects = FakePartManager()
+
+            queried_suppliers = []
+
+            def _fake_get_candidates(supplier, **kwargs):
+                del kwargs
+                queried_suppliers.append(supplier)
+                if supplier == 2:
+                    return {"error_status": "Rate limit exceeded"}
+                return {"error_status": "OK", "candidates": []}
+
+            self.scout._decode_json_body = lambda request: {"pk": 1, "query": "resistor"}
+            self.scout._extract_part_tokens = lambda part, user=None: {
+                "tokens": [],
+                "sources": [],
+                "token_attribution": {},
+            }
+            self.scout._extract_search_hints = lambda part, token_data: {}
+            self.scout._extract_numeric_constraints = lambda part: []
+            self.scout._get_search_ready_suppliers = lambda user=None: [
+                {"pk": 1, "key": "ok", "name": "OK Supplier"},
+                {"pk": 2, "key": "bad", "name": "Bad Supplier"},
+            ]
+            self.scout._get_supplier_definition = (
+                lambda supplier_key: FakeAdapter() if supplier_key in ["ok", "bad"] else None
+            )
+            self.scout._get_supplier_max_candidates = (
+                lambda supplier_pk, default=40: default
+            )
+            self.scout.get_candidates = _fake_get_candidates
+
+            response = self.scout.search_candidates(types.SimpleNamespace(user=None))
+
+            self.assertEqual(response["message"], "No supplier matches returned for the current query")
+            self.assertEqual(queried_suppliers, [1, 2])
+            self.assertEqual(len(response["debug"]["supplier_failures"]), 1)
+            self.assertEqual(response["debug"]["supplier_failures"][0]["supplier_pk"], 2)
+            self.assertEqual(
+                response["debug"]["supplier_failures"][0]["message"],
+                "Rate limit exceeded",
+            )
+        finally:
+            core_module.Part.objects = original_part_objects
+
+    def test_search_candidates_all_suppliers_includes_supplier_metadata_and_existing_detection(
+        self,
+    ):
+        class FakePartManager:
+            def filter(self, **kwargs):
+                del kwargs
+                return self
+
+            def first(self):
+                return object()
+
+        class FakeSupplierPartRecord:
+            def __init__(self, pk, supplier_id, sku):
+                self.pk = pk
+                self.supplier_id = supplier_id
+                self.SKU = sku
+
+        class FakeSupplierPartManager:
+            def __init__(self, rows):
+                self._rows = list(rows)
+
+            def filter(self, **kwargs):
+                del kwargs
+                return self
+
+            def only(self, *args, **kwargs):
+                del args, kwargs
+                return list(self._rows)
+
+        class FakeAdapter:
+            def normalize_candidate(self, candidate):
+                return dict(candidate)
+
+            def get_candidate_supplier_part_number(self, candidate):
+                return str(candidate.get("supplier_part_number") or "")
+
+        from supplier_scout import core as core_module
+
+        original_part_objects = core_module.Part.objects
+        original_supplier_part_objects = core_module.SupplierPart.objects
+
+        try:
+            core_module.Part.objects = FakePartManager()
+            core_module.SupplierPart.objects = FakeSupplierPartManager(
+                [FakeSupplierPartRecord(pk=11, supplier_id=1, sku="SKU-1")]
+            )
+
+            self.scout._decode_json_body = lambda request: {"pk": 1, "query": "ic", "top_n": 10}
+            self.scout._extract_part_tokens = lambda part, user=None: {
+                "tokens": [],
+                "sources": [],
+                "token_attribution": {},
+            }
+            self.scout._extract_search_hints = lambda part, token_data: {}
+            self.scout._extract_numeric_constraints = lambda part: []
+            self.scout._get_search_ready_suppliers = lambda user=None: [
+                {"pk": 1, "key": "mouser", "name": "Mouser"},
+                {"pk": 2, "key": "digikey", "name": "DigiKey"},
+            ]
+            self.scout._get_supplier_definition = (
+                lambda supplier_key: FakeAdapter()
+                if supplier_key in ["mouser", "digikey"]
+                else None
+            )
+            self.scout._get_supplier_max_candidates = (
+                lambda supplier_pk, default=40: default
+            )
+            self.scout.get_candidates = lambda supplier, **kwargs: {
+                "error_status": "OK",
+                "candidates": [
+                    {
+                        "supplier_part_number": "SKU-1",
+                        "manufacturer_part_number": f"MPN-{supplier}",
+                    }
+                ],
+            }
+            self.scout._rank_candidates = (
+                lambda query, candidates, user=None, top_n=10, constraints=None: list(
+                    candidates
+                )
+            )
+
+            response = self.scout.search_candidates(types.SimpleNamespace(user=None))
+
+            self.assertEqual(response["message"], "OK")
+            self.assertEqual(response["count"], 2)
+
+            by_supplier_pk = {
+                candidate["_supplier_pk"]: candidate for candidate in response["candidates"]
+            }
+
+            self.assertEqual(by_supplier_pk[1]["_supplier_key"], "mouser")
+            self.assertEqual(by_supplier_pk[1]["_supplier_name"], "Mouser")
+            self.assertEqual(by_supplier_pk[2]["_supplier_key"], "digikey")
+            self.assertEqual(by_supplier_pk[2]["_supplier_name"], "DigiKey")
+
+            self.assertTrue(by_supplier_pk[1]["existing_supplier_part"])
+            self.assertEqual(by_supplier_pk[1]["existing_supplier_part_pk"], 11)
+            self.assertFalse(by_supplier_pk[2]["existing_supplier_part"])
+            self.assertIsNone(by_supplier_pk[2]["existing_supplier_part_pk"])
+        finally:
+            core_module.Part.objects = original_part_objects
+            core_module.SupplierPart.objects = original_supplier_part_objects
+
     def test_is_supplier_resync_due_uses_interval_and_last_success(self):
         class FakeAdapter:
             key = "mouser"

@@ -222,6 +222,31 @@ class TestMouserSupplierAdapter(unittest.TestCase):
         key_a = self.adapter._build_cache_key(url, {"b": 2, "a": 1})
         key_b = self.adapter._build_cache_key(url, {"a": 1, "b": 2})
         self.assertEqual(key_a, key_b)
+        self.assertEqual(len(key_a), 64)
+
+    def test_build_cache_key_ignores_api_key_query_parameter(self):
+        url_a = (
+            "https://example.invalid/search"
+            "?apiKey=secret-a&countryCode=US&currencyCode=USD"
+        )
+        url_b = (
+            "https://example.invalid/search"
+            "?apiKey=secret-b&countryCode=US&currencyCode=USD"
+        )
+
+        key_a = self.adapter._build_cache_key(url_a, {"query": "abc"})
+        key_b = self.adapter._build_cache_key(url_b, {"query": "abc"})
+
+        self.assertEqual(key_a, key_b)
+
+    def test_get_cache_dir_uses_restrictive_permissions(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home_path = Path(temp_dir)
+
+            with patch("supplier_scout.mouser.Path.home", return_value=home_path):
+                cache_dir = self.adapter._get_cache_dir()
+
+            self.assertEqual(cache_dir.stat().st_mode & 0o777, 0o700)
 
     def test_get_cache_ttl_parses_and_bounds_values(self):
         self.assertEqual(self.adapter._get_cache_ttl_seconds(), 3600)
@@ -245,6 +270,21 @@ class TestMouserSupplierAdapter(unittest.TestCase):
 
             cached = self.adapter._get_cached_response(url, payload)
             self.assertEqual(cached, {"value": 123})
+
+    def test_cache_response_writes_restrictive_file_permissions(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            self.adapter._get_cache_dir = MagicMock(return_value=temp_path)
+
+            url = "https://example.invalid/search"
+            payload = {"query": "abc"}
+            self.adapter._cache_response(url, payload, {"value": 123})
+
+            cache_key = self.adapter._build_cache_key(url, payload)
+            cache_file = temp_path / f"{cache_key}.json"
+
+            self.assertTrue(cache_file.exists())
+            self.assertEqual(cache_file.stat().st_mode & 0o777, 0o600)
 
     def test_get_cached_response_ignores_stale_cache(self):
         with tempfile.TemporaryDirectory() as temp_dir:

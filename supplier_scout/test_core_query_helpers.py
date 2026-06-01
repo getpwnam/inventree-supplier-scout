@@ -561,6 +561,102 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         self.assertEqual(payload["suppliers"][0]["daily_count"], 42)
         self.assertTrue(payload["suppliers"][0]["configured"])
 
+    def test_search_candidates_requires_part_write_permission(self):
+        request = types.SimpleNamespace(user=types.SimpleNamespace())
+
+        with patch("supplier_scout.core.check_user_role", return_value=False):
+            response = self.scout.search_candidates(request)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response["message"], "Permission denied")
+
+    def test_apply_candidates_requires_part_write_permission(self):
+        request = types.SimpleNamespace(user=types.SimpleNamespace())
+
+        with patch("supplier_scout.core.check_user_role", return_value=False):
+            response = self.scout.apply_candidates(request)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response["message"], "Permission denied")
+
+    def test_rate_limit_status_requires_part_write_permission(self):
+        request = types.SimpleNamespace(
+            user=types.SimpleNamespace(),
+            method="GET",
+            GET={},
+        )
+
+        with patch("supplier_scout.core.check_user_role", return_value=False):
+            response = self.scout.rate_limit_status(request)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response["message"], "Permission denied")
+
+    def test_run_resync_requires_admin_for_supplier_wide_resync(self):
+        request = types.SimpleNamespace(user=types.SimpleNamespace())
+        self.scout._decode_json_body = lambda _request: {"supplier": 7}
+        self.scout._get_supplier_registration = lambda supplier_pk: {
+            "pk": supplier_pk,
+            "key": "mouser",
+        }
+        self.scout._get_supplier_definition = lambda supplier_key: types.SimpleNamespace(
+            key=supplier_key,
+            has_search_credentials=lambda user=None: True,
+        )
+
+        with patch("supplier_scout.core.check_user_role", return_value=True):
+            response = self.scout.run_resync(request)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response["message"], "Admin permission required for supplier resync"
+        )
+
+    def test_token_debug_does_not_return_tracebacks(self):
+        request = types.SimpleNamespace(
+            user=types.SimpleNamespace(),
+            method="GET",
+            GET={"pk": 1},
+        )
+
+        with patch("supplier_scout.core.check_user_role", return_value=True), patch(
+            "supplier_scout.core.Part.objects.filter",
+            side_effect=RuntimeError("boom"),
+        ):
+            response = self.scout.token_debug(request)
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response["message"], "Token debug failed")
+        self.assertNotIn("debug", response)
+
+    def test_search_candidates_does_not_return_tracebacks(self):
+        request = types.SimpleNamespace(user=types.SimpleNamespace())
+        self.scout._decode_json_body = lambda _request: {"pk": 1}
+
+        with patch("supplier_scout.core.check_user_role", return_value=True), patch(
+            "supplier_scout.core.Part.objects.filter",
+            side_effect=RuntimeError("boom"),
+        ):
+            response = self.scout.search_candidates(request)
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response["message"], "Candidate search failed")
+        self.assertNotIn("debug", response)
+
+    def test_apply_candidates_does_not_return_tracebacks(self):
+        request = types.SimpleNamespace(user=types.SimpleNamespace())
+        self.scout._decode_json_body = lambda _request: {"pk": 1}
+
+        with patch("supplier_scout.core.check_user_role", return_value=True), patch(
+            "supplier_scout.core.Part.objects.filter",
+            side_effect=RuntimeError("boom"),
+        ):
+            response = self.scout.apply_candidates(request)
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response["message"], "Candidate apply failed")
+        self.assertNotIn("debug", response)
+
     def test_search_candidates_all_suppliers_records_supplier_failures(self):
         class FakePartManager:
             def filter(self, **kwargs):
@@ -612,7 +708,9 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
             )
             self.scout.get_candidates = _fake_get_candidates
 
-            response = self.scout.search_candidates(types.SimpleNamespace(user=None))
+            response = self.scout.search_candidates(
+                types.SimpleNamespace(user=types.SimpleNamespace())
+            )
 
             self.assertEqual(response["message"], "No supplier matches returned for the current query")
             self.assertEqual(queried_suppliers, [1, 2])
@@ -707,7 +805,9 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
                 )
             )
 
-            response = self.scout.search_candidates(types.SimpleNamespace(user=None))
+            response = self.scout.search_candidates(
+                types.SimpleNamespace(user=types.SimpleNamespace())
+            )
 
             self.assertEqual(response["message"], "OK")
             self.assertEqual(response["count"], 2)

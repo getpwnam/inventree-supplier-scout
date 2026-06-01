@@ -1582,6 +1582,28 @@ class SupplierScout(
         except Exception:
             return {}
 
+    def _user_has_part_write_permission(self, user):
+        if user is None:
+            return False
+
+        return bool(
+            check_user_role(user, "part", "change")
+            or check_user_role(user, "part", "delete")
+            or check_user_role(user, "part", "add")
+        )
+
+    def _user_is_admin(self, user):
+        return bool(
+            getattr(user, "is_superuser", False) or getattr(user, "is_staff", False)
+        )
+
+    def _permission_denied(self, message="Permission denied"):
+        return JsonResponse({"message": message}, status=403)
+
+    def _handle_endpoint_exception(self, message, exc):
+        logger.exception("%s: %s", message, exc)
+        return JsonResponse({"message": message}, status=500)
+
     def _get_supplier_definition(self, supplier_key):
         adapter_class = self.SUPPLIER_ADAPTERS.get(
             str(supplier_key or "").strip().lower()
@@ -2073,6 +2095,9 @@ class SupplierScout(
         }
 
     def rate_limit_status(self, request):
+        if not self._user_has_part_write_permission(getattr(request, "user", None)):
+            return self._permission_denied()
+
         supplier_pk = None
 
         if request.method.upper() == "GET":
@@ -2091,6 +2116,10 @@ class SupplierScout(
         )
 
     def run_resync(self, request):
+        user = getattr(request, "user", None)
+        if not self._user_has_part_write_permission(user):
+            return self._permission_denied()
+
         data = self._decode_json_body(request)
 
         try:
@@ -2124,12 +2153,7 @@ class SupplierScout(
         cursor_before = self._get_resync_cursor_pk(adapter.key)
 
         if action == "reset_cursor":
-            user = getattr(request, "user", None)
-            is_admin = bool(
-                getattr(user, "is_superuser", False) or getattr(user, "is_staff", False)
-            )
-
-            if not is_admin:
+            if not self._user_is_admin(user):
                 return JsonResponse(
                     {"message": "Admin permission required for cursor reset"},
                     status=403,
@@ -2145,6 +2169,12 @@ class SupplierScout(
                 "cursor_before": cursor_before,
                 "cursor_after": 0,
             })
+
+        if part_pk is None and not self._user_is_admin(user):
+            return JsonResponse(
+                {"message": "Admin permission required for supplier resync"},
+                status=403,
+            )
 
         now_ts = self._to_int_from_string(time.time(), default=0)
         self._set_resync_attempt_timestamp(adapter.key, now_ts)
@@ -2188,6 +2218,9 @@ class SupplierScout(
 
         Accepts part PK via query string (?pk=123) or JSON body {"pk": 123}.
         """
+        if not self._user_has_part_write_permission(getattr(request, "user", None)):
+            return self._permission_denied()
+
         try:
             data = {}
 
@@ -2244,18 +2277,7 @@ class SupplierScout(
 
             return JsonResponse(payload)
         except Exception as e:
-            import traceback
-
-            return JsonResponse(
-                {
-                    "message": f"Exception during token debug: {str(e)}",
-                    "debug": {
-                        "error_type": type(e).__name__,
-                        "error_traceback": traceback.format_exc(),
-                    },
-                },
-                status=500,
-            )
+            return self._handle_endpoint_exception("Token debug failed", e)
 
     def get_ui_panels(self, request, context, **kwargs):
         return []
@@ -2312,12 +2334,7 @@ class SupplierScout(
         if part is None or not part.purchaseable:
             return actions
 
-        has_permission = (
-            check_user_role(request.user, "part", "change")
-            or check_user_role(request.user, "part", "delete")
-            or check_user_role(request.user, "part", "add")
-        )
-        if not has_permission:
+        if not self._user_has_part_write_permission(request.user):
             return actions
 
         suppliers = self._get_search_ready_suppliers(user=request.user)
@@ -2377,6 +2394,9 @@ class SupplierScout(
         return actions
 
     def search_candidates(self, request):
+        if not self._user_has_part_write_permission(getattr(request, "user", None)):
+            return self._permission_denied()
+
         try:
             data = self._decode_json_body(request)
 
@@ -2617,21 +2637,12 @@ class SupplierScout(
                 },
             })
         except Exception as e:
-            import traceback
-
-            error_details = traceback.format_exc()
-            return JsonResponse(
-                {
-                    "message": f"Exception during candidate search: {str(e)}",
-                    "debug": {
-                        "error_type": type(e).__name__,
-                        "error_traceback": error_details,
-                    },
-                },
-                status=500,
-            )
+            return self._handle_endpoint_exception("Candidate search failed", e)
 
     def apply_candidates(self, request):
+        if not self._user_has_part_write_permission(getattr(request, "user", None)):
+            return self._permission_denied()
+
         try:
             data = self._decode_json_body(request)
 
@@ -2699,16 +2710,4 @@ class SupplierScout(
                 "results": results,
             })
         except Exception as e:
-            import traceback
-
-            error_details = traceback.format_exc()
-            return JsonResponse(
-                {
-                    "message": f"Exception during candidate apply: {str(e)}",
-                    "debug": {
-                        "error_type": type(e).__name__,
-                        "error_traceback": error_details,
-                    },
-                },
-                status=500,
-            )
+            return self._handle_endpoint_exception("Candidate apply failed", e)

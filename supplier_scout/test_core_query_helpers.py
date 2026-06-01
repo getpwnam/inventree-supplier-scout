@@ -599,9 +599,11 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
             "pk": supplier_pk,
             "key": "mouser",
         }
-        self.scout._get_supplier_definition = lambda supplier_key: types.SimpleNamespace(
-            key=supplier_key,
-            has_search_credentials=lambda user=None: True,
+        self.scout._get_supplier_definition = (
+            lambda supplier_key: types.SimpleNamespace(
+                key=supplier_key,
+                has_search_credentials=lambda user=None: True,
+            )
         )
 
         with patch("supplier_scout.core.check_user_role", return_value=True):
@@ -619,9 +621,12 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
             GET={"pk": 1},
         )
 
-        with patch("supplier_scout.core.check_user_role", return_value=True), patch(
-            "supplier_scout.core.Part.objects.filter",
-            side_effect=RuntimeError("boom"),
+        with (
+            patch("supplier_scout.core.check_user_role", return_value=True),
+            patch(
+                "supplier_scout.core.Part.objects.filter",
+                side_effect=RuntimeError("boom"),
+            ),
         ):
             response = self.scout.token_debug(request)
 
@@ -633,9 +638,12 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         request = types.SimpleNamespace(user=types.SimpleNamespace())
         self.scout._decode_json_body = lambda _request: {"pk": 1}
 
-        with patch("supplier_scout.core.check_user_role", return_value=True), patch(
-            "supplier_scout.core.Part.objects.filter",
-            side_effect=RuntimeError("boom"),
+        with (
+            patch("supplier_scout.core.check_user_role", return_value=True),
+            patch(
+                "supplier_scout.core.Part.objects.filter",
+                side_effect=RuntimeError("boom"),
+            ),
         ):
             response = self.scout.search_candidates(request)
 
@@ -647,15 +655,125 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         request = types.SimpleNamespace(user=types.SimpleNamespace())
         self.scout._decode_json_body = lambda _request: {"pk": 1}
 
-        with patch("supplier_scout.core.check_user_role", return_value=True), patch(
-            "supplier_scout.core.Part.objects.filter",
-            side_effect=RuntimeError("boom"),
+        with (
+            patch("supplier_scout.core.check_user_role", return_value=True),
+            patch(
+                "supplier_scout.core.Part.objects.filter",
+                side_effect=RuntimeError("boom"),
+            ),
         ):
             response = self.scout.apply_candidates(request)
 
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response["message"], "Candidate apply failed")
         self.assertNotIn("debug", response)
+
+    def test_apply_candidates_refreshes_part_pricing_after_success(self):
+        class FakePart:
+            def __init__(self):
+                self.updated = 0
+
+            def update_pricing(self):
+                self.updated += 1
+
+        class FakeQueryResult:
+            def __init__(self, part=None):
+                self._part = part
+
+            def first(self):
+                return self._part
+
+        fake_part = FakePart()
+        fake_supplier = types.SimpleNamespace(pk=7)
+
+        request = types.SimpleNamespace(user=types.SimpleNamespace())
+        self.scout._decode_json_body = lambda _request: {
+            "pk": 1,
+            "supplier": 7,
+            "candidates": [{"supplier_part_number": "SKU-1"}],
+        }
+
+        with (
+            patch("supplier_scout.core.check_user_role", return_value=True),
+            patch(
+                "supplier_scout.core.Part.objects.filter",
+                return_value=FakeQueryResult(fake_part),
+            ),
+            patch(
+                "supplier_scout.core.Company.objects.filter",
+                return_value=FakeQueryResult(fake_supplier),
+            ),
+            patch.object(
+                self.scout,
+                "_upsert_supplier_part_candidate",
+                return_value={
+                    "status": "created",
+                    "supplier_part_pk": 11,
+                    "sku": "SKU-1",
+                },
+            ),
+        ):
+            response = self.scout.apply_candidates(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["created"], 1)
+        self.assertEqual(response["errors"], 0)
+        self.assertEqual(fake_part.updated, 1)
+
+    def test_apply_candidates_refreshes_part_pricing_for_multiple_candidates(self):
+        class FakePart:
+            def __init__(self):
+                self.updated = 0
+
+            def update_pricing(self):
+                self.updated += 1
+
+        class FakeQueryResult:
+            def __init__(self, part=None):
+                self._part = part
+
+            def first(self):
+                return self._part
+
+        fake_part = FakePart()
+        fake_supplier = types.SimpleNamespace(pk=7)
+
+        request = types.SimpleNamespace(user=types.SimpleNamespace())
+        self.scout._decode_json_body = lambda _request: {
+            "pk": 1,
+            "supplier": 7,
+            "candidates": [
+                {"supplier_part_number": "SKU-1"},
+                {"supplier_part_number": "SKU-2"},
+            ],
+        }
+
+        with (
+            patch("supplier_scout.core.check_user_role", return_value=True),
+            patch(
+                "supplier_scout.core.Part.objects.filter",
+                return_value=FakeQueryResult(fake_part),
+            ),
+            patch(
+                "supplier_scout.core.Company.objects.filter",
+                return_value=FakeQueryResult(fake_supplier),
+            ),
+            patch.object(
+                self.scout,
+                "_upsert_supplier_part_candidate",
+                side_effect=[
+                    {"status": "created", "supplier_part_pk": 11, "sku": "SKU-1"},
+                    {"status": "created", "supplier_part_pk": 12, "sku": "SKU-2"},
+                ],
+            ),
+        ):
+            response = self.scout.apply_candidates(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["created"], 2)
+        self.assertEqual(response["updated"], 0)
+        self.assertEqual(response["errors"], 0)
+        self.assertEqual(fake_part.updated, 1)
 
     def test_search_candidates_all_suppliers_records_supplier_failures(self):
         class FakePartManager:
@@ -688,7 +806,10 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
                     return {"error_status": "Rate limit exceeded"}
                 return {"error_status": "OK", "candidates": []}
 
-            self.scout._decode_json_body = lambda request: {"pk": 1, "query": "resistor"}
+            self.scout._decode_json_body = lambda request: {
+                "pk": 1,
+                "query": "resistor",
+            }
             self.scout._extract_part_tokens = lambda part, user=None: {
                 "tokens": [],
                 "sources": [],
@@ -701,7 +822,9 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
                 {"pk": 2, "key": "bad", "name": "Bad Supplier"},
             ]
             self.scout._get_supplier_definition = (
-                lambda supplier_key: FakeAdapter() if supplier_key in ["ok", "bad"] else None
+                lambda supplier_key: FakeAdapter()
+                if supplier_key in ["ok", "bad"]
+                else None
             )
             self.scout._get_supplier_max_candidates = (
                 lambda supplier_pk, default=40: default
@@ -712,10 +835,15 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
                 types.SimpleNamespace(user=types.SimpleNamespace())
             )
 
-            self.assertEqual(response["message"], "No supplier matches returned for the current query")
+            self.assertEqual(
+                response["message"],
+                "No supplier matches returned for the current query",
+            )
             self.assertEqual(queried_suppliers, [1, 2])
             self.assertEqual(len(response["debug"]["supplier_failures"]), 1)
-            self.assertEqual(response["debug"]["supplier_failures"][0]["supplier_pk"], 2)
+            self.assertEqual(
+                response["debug"]["supplier_failures"][0]["supplier_pk"], 2
+            )
             self.assertEqual(
                 response["debug"]["supplier_failures"][0]["message"],
                 "Rate limit exceeded",
@@ -766,11 +894,15 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
 
         try:
             core_module.Part.objects = FakePartManager()
-            core_module.SupplierPart.objects = FakeSupplierPartManager(
-                [FakeSupplierPartRecord(pk=11, supplier_id=1, sku="SKU-1")]
-            )
+            core_module.SupplierPart.objects = FakeSupplierPartManager([
+                FakeSupplierPartRecord(pk=11, supplier_id=1, sku="SKU-1")
+            ])
 
-            self.scout._decode_json_body = lambda request: {"pk": 1, "query": "ic", "top_n": 10}
+            self.scout._decode_json_body = lambda request: {
+                "pk": 1,
+                "query": "ic",
+                "top_n": 10,
+            }
             self.scout._extract_part_tokens = lambda part, user=None: {
                 "tokens": [],
                 "sources": [],
@@ -813,7 +945,8 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
             self.assertEqual(response["count"], 2)
 
             by_supplier_pk = {
-                candidate["_supplier_pk"]: candidate for candidate in response["candidates"]
+                candidate["_supplier_pk"]: candidate
+                for candidate in response["candidates"]
             }
 
             self.assertEqual(by_supplier_pk[1]["_supplier_key"], "mouser")
@@ -1074,11 +1207,14 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         settings_module = sys.modules["django.conf"].settings
         settings_module.DEBUG = True
 
-        with patch(
-            "supplier_scout.adapters.APICallMixin.api_call",
-            return_value=response,
-            create=True,
-        ) as mock_api_call, patch("supplier_scout.adapters.logger") as mock_logger:
+        with (
+            patch(
+                "supplier_scout.adapters.APICallMixin.api_call",
+                return_value=response,
+                create=True,
+            ) as mock_api_call,
+            patch("supplier_scout.adapters.logger") as mock_logger,
+        ):
             result = client.api_call(
                 "https://api.example.invalid/search?apiKey=secret-key&query=abc",
                 method="POST",
@@ -1114,11 +1250,14 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         settings_module = sys.modules["django.conf"].settings
         settings_module.DEBUG = False
 
-        with patch(
-            "supplier_scout.adapters.APICallMixin.api_call",
-            return_value=response,
-            create=True,
-        ), patch("supplier_scout.adapters.logger") as mock_logger:
+        with (
+            patch(
+                "supplier_scout.adapters.APICallMixin.api_call",
+                return_value=response,
+                create=True,
+            ),
+            patch("supplier_scout.adapters.logger") as mock_logger,
+        ):
             result = client.api_call(
                 "https://api.example.invalid/search?apiKey=secret-key",
                 method="GET",

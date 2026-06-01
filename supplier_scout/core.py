@@ -2672,6 +2672,7 @@ class SupplierScout(
             created = 0
             updated = 0
             errors = 0
+            pricing_refresh_required = False
 
             for candidate in candidates:
                 if not isinstance(candidate, dict):
@@ -2695,12 +2696,24 @@ class SupplierScout(
 
                 if result.get("status") == "created":
                     created += 1
+                    pricing_refresh_required = True
                 elif result.get("status") == "updated":
                     updated += 1
+                    pricing_refresh_required = True
                 else:
                     errors += 1
 
                 results.append(result)
+
+            if pricing_refresh_required and hasattr(part, "update_pricing"):
+                try:
+                    part.update_pricing()
+                except Exception as exc:
+                    errors += 1
+                    results.append({
+                        "status": "error",
+                        "message": f"Part pricing refresh failed: {exc}",
+                    })
 
             return JsonResponse({
                 "message": "OK",

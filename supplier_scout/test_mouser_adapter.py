@@ -286,6 +286,33 @@ class TestMouserSupplierAdapter(unittest.TestCase):
             self.assertTrue(cache_file.exists())
             self.assertEqual(cache_file.stat().st_mode & 0o777, 0o600)
 
+    def test_clear_cache_removes_files_and_logs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            self.adapter._get_cache_dir = MagicMock(return_value=temp_path)
+
+            first = temp_path / "first.json"
+            second = temp_path / "second.json"
+            first.write_text(json.dumps({"value": 1}), encoding="utf-8")
+            second.write_text(json.dumps({"value": 2}), encoding="utf-8")
+
+            with patch("supplier_scout.mouser.logger") as mock_logger:
+                result = self.adapter.clear_cache()
+
+            self.assertEqual(result["cache_file_count"], 2)
+            self.assertEqual(result["cleared_file_count"], 2)
+            self.assertEqual(result["failed_file_count"], 0)
+            self.assertFalse(first.exists())
+            self.assertFalse(second.exists())
+            self.assertGreaterEqual(mock_logger.debug.call_count, 2)
+            logged_text = " ".join(
+                str(argument)
+                for call in mock_logger.debug.call_args_list
+                for argument in call.args
+            )
+            self.assertIn("Supplier cache clear requested", logged_text)
+            self.assertIn("Supplier cache clear finished", logged_text)
+
     def test_get_cached_response_ignores_stale_cache(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)

@@ -1,6 +1,7 @@
 """Mouser supplier adapter."""
 
 import json
+import logging
 import re
 import time
 import hashlib
@@ -24,6 +25,9 @@ except Exception:  # pragma: no cover - fallback for isolated unit tests
 from .adapters import BaseSupplierAdapter
 from .adapters import SupplierAPIRateLimitError
 from .adapters import SupplierAPIClient
+
+
+logger = logging.getLogger(__name__)
 
 
 MOUSER_SEARCH_API_KEY_SETTING = "MOUSER_APIKEY_SEARCH"
@@ -221,25 +225,49 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         """
         ttl_seconds = self._get_cache_ttl_seconds()
         if ttl_seconds <= 0:
-            # Caching disabled
+            logger.debug(
+                "Supplier cache lookup skipped supplier=%s reason=disabled",
+                self.key,
+            )
             return None
 
         cache_key = self._build_cache_key(url, payload)
         cache_file = self._get_cache_dir() / f"{cache_key}.json"
 
-        # Check if cache exists and is fresh
         if cache_file.exists():
             try:
                 stat = cache_file.stat()
                 age_seconds = time.time() - stat.st_mtime
 
                 if age_seconds < ttl_seconds:
-                    # Cache is fresh, load and return it
                     data = json.loads(cache_file.read_text())
+                    logger.debug(
+                        "Supplier cache hit supplier=%s cache_file=%s age_seconds=%.2f ttl_seconds=%s",
+                        self.key,
+                        cache_file,
+                        age_seconds,
+                        ttl_seconds,
+                    )
                     return data
+                logger.debug(
+                    "Supplier cache stale supplier=%s cache_file=%s age_seconds=%.2f ttl_seconds=%s",
+                    self.key,
+                    cache_file,
+                    age_seconds,
+                    ttl_seconds,
+                )
             except (OSError, json.JSONDecodeError):
-                # Cache file corrupted or unreadable, proceed to API call
-                pass
+                logger.debug(
+                    "Supplier cache unreadable supplier=%s cache_file=%s",
+                    self.key,
+                    cache_file,
+                )
+        else:
+            logger.debug(
+                "Supplier cache miss supplier=%s cache_file=%s",
+                self.key,
+                cache_file,
+            )
 
         return None
 
@@ -247,7 +275,10 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         """Store response in cache."""
         ttl_seconds = self._get_cache_ttl_seconds()
         if ttl_seconds <= 0:
-            # Caching disabled
+            logger.debug(
+                "Supplier cache write skipped supplier=%s reason=disabled",
+                self.key,
+            )
             return
 
         try:
@@ -255,9 +286,68 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
             cache_file = self._get_cache_dir() / f"{cache_key}.json"
             cache_file.write_text(json.dumps(response_data, indent=2))
             os.chmod(cache_file, 0o600)
+            logger.debug(
+                "Supplier cache stored supplier=%s cache_file=%s ttl_seconds=%s",
+                self.key,
+                cache_file,
+                ttl_seconds,
+            )
         except (OSError, json.JSONDecodeError):
-            # Silently fail if cache write fails
-            pass
+            logger.debug(
+                "Supplier cache write failed supplier=%s cache_key=%s",
+                self.key,
+                self._build_cache_key(url, payload),
+            )
+
+    def clear_cache(self):
+        """Delete all cached response files for this supplier."""
+        ttl_seconds = self._get_cache_ttl_seconds()
+        cache_dir = self._get_cache_dir()
+        files = [entry for entry in cache_dir.glob("*.json") if entry.is_file()]
+        cleared = 0
+        failed = 0
+        size_bytes = 0
+
+        for entry in files:
+            try:
+                size_bytes += entry.stat().st_size
+            except OSError:
+                pass
+
+        logger.debug(
+            "Supplier cache clear requested supplier=%s cache_dir=%s files=%s ttl_seconds=%s",
+            self.key,
+            cache_dir,
+            len(files),
+            ttl_seconds,
+        )
+
+        for entry in files:
+            try:
+                entry.unlink()
+                cleared += 1
+            except OSError:
+                failed += 1
+
+        logger.debug(
+            "Supplier cache clear finished supplier=%s cache_dir=%s cleared=%s failed=%s bytes=%s",
+            self.key,
+            cache_dir,
+            cleared,
+            failed,
+            size_bytes,
+        )
+
+        return {
+            "enabled": ttl_seconds > 0,
+            "cache_backend": "filesystem",
+            "cache_ttl_seconds": ttl_seconds,
+            "cache_path": self._get_cache_path_display(),
+            "cache_file_count": len(files),
+            "cache_size_bytes": size_bytes,
+            "cleared_file_count": cleared,
+            "failed_file_count": failed,
+        }
 
     def get_cache_status(self):
         ttl_seconds = self._get_cache_ttl_seconds()
@@ -295,7 +385,7 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
                 "enabled": True,
                 "cache_backend": "filesystem",
                 "cache_ttl_seconds": ttl_seconds,
-                "cache_path": "",
+                "cache_path": self._get_cache_path_display(),
                 "cache_file_count": 0,
                 "cache_size_bytes": 0,
             }
@@ -367,7 +457,9 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         if min_qty is None:
             try:
                 min_qty_setting = (
-                    self.get_effective_setting(self.min_price_quantity_setting, user=user)
+                    self.get_effective_setting(
+                        self.min_price_quantity_setting, user=user
+                    )
                     or 1
                 )
                 min_qty = int(min_qty_setting) if min_qty_setting else 1
@@ -377,7 +469,9 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         if max_qty is None:
             try:
                 max_qty_setting = (
-                    self.get_effective_setting(self.max_price_quantity_setting, user=user)
+                    self.get_effective_setting(
+                        self.max_price_quantity_setting, user=user
+                    )
                     or ""
                 )
                 max_qty = int(max_qty_setting) if max_qty_setting else None

@@ -7,6 +7,7 @@ requiring a full InvenTree runtime by stubbing external modules.
 import sys
 import types
 import unittest
+import json
 from unittest.mock import patch
 
 
@@ -128,6 +129,20 @@ def _install_core_stubs():
         sys.modules["django.conf"] = django_conf_module
         sys.modules["django.http"] = django_http_module
         sys.modules["django.urls"] = django_urls_module
+
+    if "InvenTree" not in sys.modules:
+        inventree_module = types.ModuleType("InvenTree")
+        sys.modules["InvenTree"] = inventree_module
+
+    if "InvenTree.tasks" not in sys.modules:
+        inventree_tasks_module = types.ModuleType("InvenTree.tasks")
+
+        def offload_task(*args, **kwargs):
+            del args, kwargs
+            return "task-123"
+
+        inventree_tasks_module.offload_task = offload_task
+        sys.modules["InvenTree.tasks"] = inventree_tasks_module
 
     plugin_module = sys.modules.get("plugin")
     if plugin_module is None:
@@ -613,6 +628,184 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         self.assertEqual(
             response["message"], "Admin permission required for supplier resync"
         )
+
+    def test_run_resync_accepts_json_route_format_kwarg(self):
+        request = types.SimpleNamespace(user=types.SimpleNamespace())
+        self.scout._decode_json_body = lambda _request: {"supplier": 7}
+        self.scout._get_supplier_registration = lambda supplier_pk: {
+            "pk": supplier_pk,
+            "key": "mouser",
+        }
+        self.scout._get_supplier_definition = (
+            lambda supplier_key: types.SimpleNamespace(
+                key=supplier_key,
+                has_search_credentials=lambda user=None: True,
+            )
+        )
+
+        with patch("supplier_scout.core.check_user_role", return_value=True):
+            response = self.scout.run_resync(request, format="json")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response["message"], "Admin permission required for supplier resync"
+        )
+
+    def test_run_resync_can_queue_async_supplier_resync(self):
+        request = types.SimpleNamespace(user=types.SimpleNamespace(is_superuser=True))
+        self.scout._decode_json_body = lambda _request: {"supplier": 7, "async": True}
+        self.scout._get_supplier_registration = lambda supplier_pk: {
+            "pk": supplier_pk,
+            "key": "mouser",
+        }
+        self.scout._get_supplier_definition = (
+            lambda supplier_key: types.SimpleNamespace(
+                key=supplier_key,
+                has_search_credentials=lambda user=None: True,
+            )
+        )
+
+        with patch("InvenTree.tasks.offload_task", return_value="task-abc"):
+            response = self.scout.run_resync(request, format="json")
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response["message"], "Queued")
+        self.assertTrue(response["queued"])
+        self.assertEqual(response["task_id"], "task-abc")
+        self.assertEqual(response["task_url"], "/api/background-task/task-abc/")
+
+    def test_run_resync_async_returns_503_when_queue_unavailable(self):
+        request = types.SimpleNamespace(user=types.SimpleNamespace(is_superuser=True))
+        self.scout._decode_json_body = lambda _request: {"supplier": 7, "async": True}
+        self.scout._get_supplier_registration = lambda supplier_pk: {
+            "pk": supplier_pk,
+            "key": "mouser",
+        }
+        self.scout._get_supplier_definition = (
+            lambda supplier_key: types.SimpleNamespace(
+                key=supplier_key,
+                has_search_credentials=lambda user=None: True,
+            )
+        )
+
+        with patch("InvenTree.tasks.offload_task", return_value=False):
+            response = self.scout.run_resync(request, format="json")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response["message"], "Could not queue supplier resync task")
+
+    def test_json_routed_endpoints_accept_format_kwarg(self):
+        self.scout._get_dashboard_metrics_payload = lambda: {"message": "OK"}
+
+        dashboard_response = self.scout.dashboard_metrics(
+            types.SimpleNamespace(), format="json"
+        )
+        self.assertEqual(dashboard_response.status_code, 200)
+        self.assertEqual(dashboard_response["message"], "OK")
+
+        request = types.SimpleNamespace(user=types.SimpleNamespace())
+        with patch("supplier_scout.core.check_user_role", return_value=False):
+            rate_response = self.scout.rate_limit_status(request, format="json")
+        self.assertEqual(rate_response.status_code, 403)
+        self.assertEqual(rate_response["message"], "Permission denied")
+
+        search_request = types.SimpleNamespace(user=types.SimpleNamespace())
+        self.scout._decode_json_body = lambda _request: {"pk": 1}
+        with (
+            patch("supplier_scout.core.check_user_role", return_value=True),
+            patch(
+                "supplier_scout.core.Part.objects.filter",
+                side_effect=RuntimeError("boom"),
+            ),
+        ):
+            search_response = self.scout.search_candidates(
+                search_request, format="json"
+            )
+        self.assertEqual(search_response.status_code, 500)
+        self.assertEqual(search_response["message"], "Candidate search failed")
+
+        apply_request = types.SimpleNamespace(user=types.SimpleNamespace())
+        self.scout._decode_json_body = lambda _request: {"pk": 1}
+        with (
+            patch("supplier_scout.core.check_user_role", return_value=True),
+            patch(
+                "supplier_scout.core.Part.objects.filter",
+                side_effect=RuntimeError("boom"),
+            ),
+        ):
+            apply_response = self.scout.apply_candidates(apply_request, format="json")
+        self.assertEqual(apply_response.status_code, 500)
+        self.assertEqual(apply_response["message"], "Candidate apply failed")
+
+        token_request = types.SimpleNamespace(
+            user=types.SimpleNamespace(),
+            method="GET",
+            GET={"pk": 1},
+        )
+        with (
+            patch("supplier_scout.core.check_user_role", return_value=True),
+            patch(
+                "supplier_scout.core.Part.objects.filter",
+                side_effect=RuntimeError("boom"),
+            ),
+        ):
+            token_response = self.scout.token_debug(token_request, format="json")
+        self.assertEqual(token_response.status_code, 500)
+        self.assertEqual(token_response["message"], "Token debug failed")
+
+    def test_clear_cache_clears_a_single_supplier_cache(self):
+        request = types.SimpleNamespace(
+            user=types.SimpleNamespace(is_superuser=True),
+            method="POST",
+            body=json.dumps({"supplier": 7}).encode("utf-8"),
+        )
+
+        clear_result = {
+            "enabled": True,
+            "cache_backend": "filesystem",
+            "cache_ttl_seconds": 3600,
+            "cache_path": "/tmp/cache",
+            "cache_file_count": 2,
+            "cache_size_bytes": 1234,
+            "cleared_file_count": 2,
+            "failed_file_count": 0,
+        }
+
+        self.scout._get_supplier_registration = lambda supplier_pk: {
+            "pk": supplier_pk,
+            "key": "mouser",
+            "name": "Mouser",
+        }
+        self.scout._get_supplier_definition = (
+            lambda supplier_key: types.SimpleNamespace(
+                key=supplier_key,
+                clear_cache=lambda: clear_result,
+            )
+        )
+
+        response = self.scout.clear_cache(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["message"], "OK")
+        self.assertEqual(response["scope"], "supplier")
+        self.assertEqual(response["supplier_pk"], 7)
+        self.assertEqual(response["supplier_key"], "mouser")
+        self.assertEqual(response["cache"]["cleared_file_count"], 2)
+
+    def test_clear_cache_accepts_json_route_format_kwarg(self):
+        request = types.SimpleNamespace(
+            user=types.SimpleNamespace(is_superuser=True),
+            method="POST",
+            body=b"{}",
+        )
+
+        self.scout._get_registered_suppliers = lambda: []
+
+        response = self.scout.clear_cache(request, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["message"], "OK")
+        self.assertEqual(response["scope"], "all")
 
     def test_token_debug_does_not_return_tracebacks(self):
         request = types.SimpleNamespace(

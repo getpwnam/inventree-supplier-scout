@@ -42,6 +42,65 @@ from .mouser import MouserSupplierAdapter
 
 logger = logging.getLogger(__name__)
 
+SUPPLIER_SCOUT_PLUGIN_SLUG = "supplierscout"
+
+
+def run_supplier_resync_task(supplier_pk, part_pk=None):
+    from plugin import registry
+
+    plugin = registry.plugins.get(
+        SUPPLIER_SCOUT_PLUGIN_SLUG
+    ) or registry.plugins_full.get(SUPPLIER_SCOUT_PLUGIN_SLUG)
+
+    if plugin is None:
+        return {
+            "status": "error",
+            "message": "Supplier Scout plugin is not available",
+            "supplier_pk": int(supplier_pk or 0),
+        }
+
+    registration = plugin._get_supplier_registration(supplier_pk)
+    if registration is None:
+        return {
+            "status": "error",
+            "message": "Unknown supplier",
+            "supplier_pk": int(supplier_pk or 0),
+        }
+
+    adapter = plugin._get_supplier_definition(registration.get("key"))
+    if adapter is None:
+        return {
+            "status": "error",
+            "message": "Unknown supplier adapter",
+            "supplier_pk": int(supplier_pk or 0),
+        }
+
+    now_ts = plugin._to_int_from_string(time.time(), default=0)
+    plugin._set_resync_attempt_timestamp(adapter.key, now_ts)
+
+    result = plugin._resync_registered_supplier(
+        registration,
+        adapter,
+        part_pk=part_pk,
+        use_round_robin=part_pk is None,
+    )
+
+    if result.get("failed", 0) == 0:
+        plugin._set_resync_success_timestamp(adapter.key, now_ts)
+
+    cursor_after = plugin._get_resync_cursor_pk(adapter.key)
+    scope = "part" if part_pk is not None else "supplier"
+
+    result["message"] = "OK"
+    result["scope"] = scope
+    result["supplier_pk"] = int(supplier_pk or 0)
+    result["action"] = "resync"
+    result["cursor_after"] = cursor_after
+    if part_pk is not None:
+        result["part_pk"] = int(part_pk)
+
+    return result
+
 
 class SupplierScout(
     ScheduleMixin,
@@ -2051,6 +2110,11 @@ class SupplierScout(
                 name="run-resync",
             ),
             re_path(
+                r"clearcache(?:\.(?P<format>json))?$",
+                self.clear_cache,
+                name="clear-cache",
+            ),
+            re_path(
                 r"ratelimitstatus(?:\.(?P<format>json))?$",
                 self.rate_limit_status,
                 name="rate-limit-status",
@@ -2094,7 +2158,8 @@ class SupplierScout(
             "updated_ts": int(time.time()),
         }
 
-    def rate_limit_status(self, request):
+    def rate_limit_status(self, request, format=None):
+        del format
         if not self._user_has_part_write_permission(getattr(request, "user", None)):
             return self._permission_denied()
 
@@ -2115,7 +2180,8 @@ class SupplierScout(
             self._get_rate_limit_status_payload(supplier_pk=supplier_pk)
         )
 
-    def run_resync(self, request):
+    def run_resync(self, request, format=None):
+        del format
         user = getattr(request, "user", None)
         if not self._user_has_part_write_permission(user):
             return self._permission_denied()
@@ -2135,6 +2201,14 @@ class SupplierScout(
             return JsonResponse({"message": "Invalid part id"}, status=400)
 
         action = str(data.get("action") or "").strip().lower()
+        run_async_raw = data.get("async")
+        run_async = str(run_async_raw or "").strip().lower() in [
+            "1",
+            "true",
+            "yes",
+            "on",
+            "y",
+        ]
 
         registration = self._get_supplier_registration(supplier_pk)
         if registration is None:
@@ -2159,7 +2233,22 @@ class SupplierScout(
                     status=403,
                 )
 
+            logger.debug(
+                "SupplierScout resync cursor reset requested supplier_pk=%s supplier_key=%s user=%s cursor_before=%s",
+                supplier_pk,
+                adapter.key,
+                getattr(user, "username", None) or getattr(user, "pk", None),
+                cursor_before,
+            )
+
             self._set_resync_cursor_pk(adapter.key, 0)
+
+            logger.debug(
+                "SupplierScout resync cursor reset finished supplier_pk=%s supplier_key=%s cursor_after=%s",
+                supplier_pk,
+                adapter.key,
+                0,
+            )
 
             return JsonResponse({
                 "message": "OK",
@@ -2175,6 +2264,46 @@ class SupplierScout(
                 {"message": "Admin permission required for supplier resync"},
                 status=403,
             )
+
+        if run_async:
+            from InvenTree.tasks import offload_task
+
+            task_id = offload_task(
+                "supplier_scout.core.run_supplier_resync_task",
+                supplier_pk,
+                part_pk,
+                force_async=True,
+                group="supplierscout-resync",
+            )
+
+            if not isinstance(task_id, str) or task_id == "":
+                return JsonResponse(
+                    {"message": "Could not queue supplier resync task"},
+                    status=503,
+                )
+
+            scope = "part" if part_pk is not None else "supplier"
+            payload = {
+                "message": "Queued",
+                "queued": True,
+                "scope": scope,
+                "supplier_pk": supplier_pk,
+                "action": "resync",
+                "task_id": task_id,
+                "task_url": f"/api/background-task/{task_id}/",
+            }
+            if part_pk is not None:
+                payload["part_pk"] = part_pk
+
+            logger.debug(
+                "SupplierScout resync queued supplier_pk=%s supplier_key=%s part_pk=%s task_id=%s",
+                supplier_pk,
+                adapter.key,
+                part_pk,
+                task_id,
+            )
+
+            return JsonResponse(payload, status=202)
 
         now_ts = self._to_int_from_string(time.time(), default=0)
         self._set_resync_attempt_timestamp(adapter.key, now_ts)
@@ -2209,11 +2338,80 @@ class SupplierScout(
 
         return JsonResponse(result)
 
-    def dashboard_metrics(self, request):
+    def clear_cache(self, request, format=None):
+        del format
+        user = getattr(request, "user", None)
+        if not self._user_is_admin(user):
+            return self._permission_denied("Admin permission required for cache clear")
+
+        data = self._decode_json_body(request)
+
+        supplier_pk = None
+        try:
+            if data.get("supplier") not in [None, ""]:
+                supplier_pk = int(data.get("supplier"))
+        except Exception:
+            return JsonResponse({"message": "Invalid supplier id"}, status=400)
+
+        if supplier_pk is not None:
+            registration = self._get_supplier_registration(supplier_pk)
+            if registration is None:
+                return JsonResponse({"message": "Unknown supplier"}, status=404)
+
+            adapter = self._get_supplier_definition(registration.get("key"))
+            if adapter is None:
+                return JsonResponse({"message": "Unknown supplier adapter"}, status=404)
+
+            result = adapter.clear_cache()
+            logger.debug(
+                "SupplierScout cache clear finished scope=supplier supplier_pk=%s supplier_key=%s result=%s",
+                supplier_pk,
+                adapter.key,
+                result,
+            )
+
+            return JsonResponse({
+                "message": "OK",
+                "scope": "supplier",
+                "supplier_pk": supplier_pk,
+                "supplier_key": adapter.key,
+                "cache": result,
+            })
+
+        suppliers = []
+        for registration in self._get_registered_suppliers():
+            supplier_key = registration.get("key")
+            adapter = self._get_supplier_definition(supplier_key)
+            if adapter is None:
+                continue
+
+            result = adapter.clear_cache()
+            suppliers.append({
+                "supplier_pk": int(registration.get("pk") or 0),
+                "supplier_key": supplier_key,
+                "supplier_name": registration.get("name") or supplier_key,
+                "cache": result,
+            })
+
+        logger.debug(
+            "SupplierScout cache clear finished scope=all suppliers=%s user=%s",
+            len(suppliers),
+            getattr(user, "username", None) or getattr(user, "pk", None),
+        )
+
+        return JsonResponse({
+            "message": "OK",
+            "scope": "all",
+            "suppliers": suppliers,
+        })
+
+    def dashboard_metrics(self, request, format=None):
+        del format
         del request
         return JsonResponse(self._get_dashboard_metrics_payload())
 
-    def token_debug(self, request):
+    def token_debug(self, request, format=None):
+        del format
         """Return token attribution debug data for a part.
 
         Accepts part PK via query string (?pk=123) or JSON body {"pk": 123}.
@@ -2393,7 +2591,8 @@ class SupplierScout(
 
         return actions
 
-    def search_candidates(self, request):
+    def search_candidates(self, request, format=None):
+        del format
         if not self._user_has_part_write_permission(getattr(request, "user", None)):
             return self._permission_denied()
 
@@ -2639,7 +2838,8 @@ class SupplierScout(
         except Exception as e:
             return self._handle_endpoint_exception("Candidate search failed", e)
 
-    def apply_candidates(self, request):
+    def apply_candidates(self, request, format=None):
+        del format
         if not self._user_has_part_write_permission(getattr(request, "user", None)):
             return self._permission_denied()
 

@@ -418,6 +418,22 @@ class BaseSupplierAdapter:
             "cache_backend": "none",
         }
 
+    def _get_cache_path_display(self):
+        return f"~/.cache/{getattr(self, 'cache_dir_name', '').strip()}"
+
+    def clear_cache(self):
+        """Clear any supplier cache entries and return a small status payload."""
+        return {
+            "enabled": False,
+            "cache_backend": "none",
+            "cache_ttl_seconds": 0,
+            "cache_path": self._get_cache_path_display(),
+            "cache_file_count": 0,
+            "cache_size_bytes": 0,
+            "cleared_file_count": 0,
+            "failed_file_count": 0,
+        }
+
     def get_registered_supplier(self):
         try:
             supplier_pk = int(self.get_setting(self.company_setting))

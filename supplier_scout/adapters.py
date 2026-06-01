@@ -176,6 +176,14 @@ class BaseSupplierAdapter:
     def __init__(self, plugin):
         self.plugin = plugin
 
+    @staticmethod
+    def _coerce_mapping(value):
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _coerce_list(value):
+        return list(value) if isinstance(value, (list, tuple)) else []
+
     def get_setting(self, key, backup_value=None):
         return self.plugin.get_setting(key, backup_value=backup_value)
 

@@ -314,6 +314,12 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
             # Cache the response for future requests
             self._cache_response(url, payload, response_data)
 
+        if not isinstance(response_data, dict):
+            return {
+                "error_status": _("Invalid response payload from DigiKey"),
+                "products": [],
+            }
+
         try:
             status_code = int(response_data.get("status") or 0)
         except Exception:
@@ -328,10 +334,11 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
                 "products": [],
             }
 
-        errors = response_data.get("Errors") or []
+        errors = self._coerce_list(response_data.get("Errors") or [])
         if errors:
-            code = errors[0].get("Code")
-            message = errors[0].get("Message") or code or _("DigiKey search error")
+            error = self._coerce_mapping(errors[0])
+            code = error.get("Code")
+            message = error.get("Message") or code or _("DigiKey search error")
 
             if code in ["SearchNotFound", "NotFound"]:
                 return {"error_status": "OK", "products": []}
@@ -341,7 +348,7 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
                 "products": [],
             }
 
-        products = response_data.get("Products") or []
+        products = self._coerce_list(response_data.get("Products") or [])
 
         return {
             "error_status": "OK",
@@ -349,6 +356,7 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
         }
 
     def _build_candidate_from_product(self, product_data, min_qty=None, max_qty=None):
+        product_data = self._coerce_mapping(product_data)
         price_breaks = []
         min_price = None
         filtered_price = None
@@ -377,15 +385,21 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
             except (ValueError, TypeError):
                 max_qty = None
 
-        variations = product_data.get("ProductVariations") or []
+        variations = [
+            variation
+            for variation in self._coerce_list(product_data.get("ProductVariations") or [])
+            if isinstance(variation, dict)
+        ]
         primary_variation = variations[0] if variations else {}
-        pricing = (
+        pricing = self._coerce_list(
             primary_variation.get("StandardPricing")
             or product_data.get("StandardPricing")
             or []
         )
 
         for price_break in pricing:
+            if not isinstance(price_break, dict):
+                continue
             try:
                 qty = int(price_break.get("BreakQuantity") or 1)
             except Exception:
@@ -411,9 +425,9 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
                 filtered_price = price_break.get("price")
                 break
 
-        description = product_data.get("Description") or {}
-        manufacturer = product_data.get("Manufacturer") or {}
-        package_type = primary_variation.get("PackageType") or {}
+        description = self._coerce_mapping(product_data.get("Description") or {})
+        manufacturer = self._coerce_mapping(product_data.get("Manufacturer") or {})
+        package_type = self._coerce_mapping(primary_variation.get("PackageType") or {})
 
         supplier_part_number = str(
             primary_variation.get("DigiKeyProductNumber")
@@ -489,6 +503,8 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
 
             if result.get("error_status") == "OK":
                 for product_data in result.get("products", []):
+                    if not isinstance(product_data, dict):
+                        continue
                     candidate = self._build_candidate_from_product(
                         product_data,
                         min_qty=min_qty,

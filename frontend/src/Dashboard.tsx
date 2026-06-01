@@ -19,6 +19,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 type SupplierMetricsContext = {
   metrics_url?: string;
+  dashboardmetrics_url?: string;
 };
 
 type SupplierDashboardMetrics = {
@@ -58,15 +59,25 @@ function SupplierScoutDashboardItem({
   context: InvenTreePluginContext;
 }) {
   const serverContext = useMemo(() => {
-    return (context.instance || {}) as SupplierMetricsContext;
-  }, [context.instance]);
+    // InvenTree can expose plugin item data as either `instance` or `context`
+    // depending on host rendering path and UI API version.
+    return ((context.instance || context.context || {}) ??
+      {}) as SupplierMetricsContext;
+  }, [context.instance, context.context]);
+
+  const metricsUrl = useMemo(() => {
+    return (
+      String(serverContext.metrics_url || '').trim() ||
+      String(serverContext.dashboardmetrics_url || '').trim()
+    );
+  }, [serverContext.metrics_url, serverContext.dashboardmetrics_url]);
 
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [suppliers, setSuppliers] = useState<SupplierDashboardMetrics[]>([]);
 
   async function loadMetrics() {
-    if (!serverContext.metrics_url) {
+    if (!metricsUrl) {
       setError('Missing dashboard metrics URL in plugin context');
       return;
     }
@@ -75,7 +86,7 @@ function SupplierScoutDashboardItem({
     setError('');
 
     try {
-      const response = await context.api.get(serverContext.metrics_url);
+      const response = await context.api.get(metricsUrl);
       const data = response?.data || {};
       setSuppliers(data.suppliers || []);
     } catch (fetchError: any) {
@@ -92,7 +103,7 @@ function SupplierScoutDashboardItem({
   useEffect(() => {
     loadMetrics();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverContext.metrics_url]);
+  }, [metricsUrl]);
 
   function formatCache(cacheStatus: SupplierDashboardMetrics['cache_status']) {
     if (!cacheStatus || cacheStatus.enabled !== true) {

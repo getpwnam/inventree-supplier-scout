@@ -286,6 +286,7 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
     def _search_digikey_products(self, url, payload):
         # Try to get cached response
         cached_data = self._get_cached_response(url, payload)
+        from_cache = cached_data is not None
         if cached_data is not None:
             response_data = cached_data
         else:
@@ -353,6 +354,7 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
         return {
             "error_status": "OK",
             "products": products,
+            "from_cache": from_cache,
         }
 
     def _build_candidate_from_product(self, product_data, min_qty=None, max_qty=None):
@@ -517,6 +519,8 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
                         continue
 
                     seen.add(supplier_part_number)
+                    if result.get("from_cache") is True:
+                        candidate["_from_cache"] = True
                     candidates.append(candidate)
 
                     if len(candidates) >= max(int(max_results), 1):

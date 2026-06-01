@@ -447,6 +447,7 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
     def _search_mouser_parts(self, url, payload):
         # Try to get cached response
         cached_data = self._get_cached_response(url, payload)
+        from_cache = cached_data is not None
         if cached_data is not None:
             response_data = cached_data
         else:
@@ -508,6 +509,7 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         return {
             "error_status": "OK",
             "parts": parts,
+            "from_cache": from_cache,
         }
 
     def get_candidates(
@@ -564,11 +566,12 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
                     continue
 
                 seen.add(supplier_part_number)
-                candidates.append(
-                    self._build_candidate_from_part(
-                        part_data, min_qty=min_qty, max_qty=max_qty, user=user
-                    )
+                candidate = self._build_candidate_from_part(
+                    part_data, min_qty=min_qty, max_qty=max_qty, user=user
                 )
+                if result.get("from_cache") is True:
+                    candidate["_from_cache"] = True
+                candidates.append(candidate)
 
                 if len(candidates) >= max(int(max_results), 1):
                     break

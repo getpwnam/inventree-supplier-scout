@@ -49,6 +49,7 @@ type Candidate = {
   action?: string;
   _supplier_pk?: number;
   _supplier_name?: string;
+  _from_cache?: boolean;
 };
 
 type MatcherContext = {
@@ -1596,7 +1597,16 @@ function SupplierScoutMatcher({
                           </Badge>
                         </Table.Td>
                         {visibleColumns.supplier && (
-                          <Table.Td>{supplierName}</Table.Td>
+                          <Table.Td>
+                            <Group gap='xs'>
+                              <span>{supplierName}</span>
+                              {candidate._from_cache === true && (
+                                <Badge color='yellow' variant='light' size='xs'>
+                                  Cached
+                                </Badge>
+                              )}
+                            </Group>
+                          </Table.Td>
                         )}
                         {visibleColumns.sku && (
                           <Table.Td>

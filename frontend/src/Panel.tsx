@@ -76,6 +76,8 @@ type TokenGroups = {
   nameTokens: string[];
   categoryTokens: string[];
   parameterTokens: string[];
+  manufacturerPartTokens: string[];
+  semanticTokens: string[];
 };
 
 type TokenCheckboxState = {
@@ -83,6 +85,8 @@ type TokenCheckboxState = {
   includePartNameTokens: boolean;
   includeCategoryTokens: boolean;
   includeParameterTokens: boolean;
+  includeManufacturerPartTokens: boolean;
+  includeSemanticTokens: boolean;
 };
 
 type ResultColumnKey =
@@ -115,6 +119,7 @@ type TokenPillSource =
   | 'manufacturer-part'
   | 'ipn'
   | 'sku'
+  | 'semantic'
   | 'manual';
 
 const TOKEN_PILL_META: Record<
@@ -128,6 +133,7 @@ const TOKEN_PILL_META: Record<
   'manufacturer-part': { label: 'Manufacturer part', color: 'red' },
   ipn: { label: 'IPN', color: 'violet' },
   sku: { label: 'SKU', color: 'orange' },
+  semantic: { label: 'Semantic hint', color: 'cyan' },
   manual: { label: 'Manual / other', color: 'gray' }
 };
 
@@ -139,6 +145,7 @@ const TOKEN_PILL_PRIORITY: Record<TokenPillSource, number> = {
   category: 60,
   'part-name': 55,
   'name-token': 50,
+  semantic: 30,
   manual: 10
 };
 
@@ -323,6 +330,10 @@ function SupplierScoutMatcher({
     useState<boolean>(false);
   const [includeParameterTokens, setIncludeParameterTokens] =
     useState<boolean>(false);
+  const [includeManufacturerPartTokens, setIncludeManufacturerPartTokens] =
+    useState<boolean>(true);
+  const [includeSemanticTokens, setIncludeSemanticTokens] =
+    useState<boolean>(true);
 
   const supplierOptions = useMemo(
     () => [
@@ -497,7 +508,9 @@ function SupplierScoutMatcher({
         includePartName: false,
         includePartNameTokens: false,
         includeCategoryTokens: false,
-        includeParameterTokens: false
+        includeParameterTokens: false,
+        includeManufacturerPartTokens: false,
+        includeSemanticTokens: false
       };
     }
 
@@ -513,7 +526,11 @@ function SupplierScoutMatcher({
       includePartName: hasAnyActiveToken(groups.nameValues),
       includePartNameTokens: hasAnyActiveToken(groups.nameTokens),
       includeCategoryTokens: hasAnyActiveToken(groups.categoryTokens),
-      includeParameterTokens: hasAnyActiveToken(groups.parameterTokens)
+      includeParameterTokens: hasAnyActiveToken(groups.parameterTokens),
+      includeManufacturerPartTokens: hasAnyActiveToken(
+        groups.manufacturerPartTokens
+      ),
+      includeSemanticTokens: hasAnyActiveToken(groups.semanticTokens)
     };
   }
 
@@ -522,6 +539,8 @@ function SupplierScoutMatcher({
     setIncludePartNameTokens(state.includePartNameTokens);
     setIncludeCategoryTokens(state.includeCategoryTokens);
     setIncludeParameterTokens(state.includeParameterTokens);
+    setIncludeManufacturerPartTokens(state.includeManufacturerPartTokens);
+    setIncludeSemanticTokens(state.includeSemanticTokens);
   }
 
   function updateQueryTagsWithSync(
@@ -623,12 +642,16 @@ function SupplierScoutMatcher({
       const data = response?.data || {};
       const sources: TokenSourceEntry[] = data.debug?.token_sources || [];
       const queryDebug = data.debug?.query_debug || {};
+      const semanticHints: Record<string, string> =
+        data.debug?.semantic_hints || {};
       const sourceByToken: Record<string, TokenPillSource> = {};
 
       const nameVals: string[] = [];
       const nameToks: string[] = [];
       const catToks: string[] = [];
       const paramToks: string[] = [];
+      const mfgToks: string[] = [];
+      const semanticToks: string[] = [];
 
       const querySourceTokenMap = queryDebug.source_token_map || {};
       for (const [sourceName, sourceTokens] of Object.entries(
@@ -672,12 +695,27 @@ function SupplierScoutMatcher({
               setTokenSource(sourceByToken, t, 'parameter');
             }
           }
+        } else if (src.source === 'manufacturer_part') {
+          for (const t of src.tokens || []) {
+            if (t.trim()) {
+              mfgToks.push(t);
+              setTokenSource(sourceByToken, t, 'manufacturer-part');
+            }
+          }
         } else if (mappedSource) {
           for (const t of src.tokens || []) {
             if (t.trim()) {
               setTokenSource(sourceByToken, t, mappedSource);
             }
           }
+        }
+      }
+
+      for (const value of Object.values(semanticHints)) {
+        const v = String(value || '').trim();
+        if (v) {
+          semanticToks.push(v);
+          setTokenSource(sourceByToken, v, 'semantic');
         }
       }
 
@@ -693,11 +731,26 @@ function SupplierScoutMatcher({
         ...fallbackNameTokens
       ]).filter((token) => !nameValueKeys.has(normalizeTokenKey(token)));
 
+      const otherGroupTokenKeys = new Set(
+        [
+          ...nameVals,
+          ...filteredNameTokens,
+          ...catToks,
+          ...paramToks,
+          ...mfgToks
+        ].map((t) => normalizeTokenKey(t))
+      );
+      const uniqueSemanticToks = dedupTokens(semanticToks).filter(
+        (t) => !otherGroupTokenKeys.has(normalizeTokenKey(t))
+      );
+
       const groups: TokenGroups = {
         nameValues: nameVals,
         nameTokens: filteredNameTokens,
         categoryTokens: dedupTokens(catToks),
-        parameterTokens: dedupTokens(paramToks)
+        parameterTokens: dedupTokens(paramToks),
+        manufacturerPartTokens: dedupTokens(mfgToks),
+        semanticTokens: uniqueSemanticToks
       };
       setTokenGroups(groups);
       setTagSourceByToken(sourceByToken);
@@ -1253,6 +1306,29 @@ function SupplierScoutMatcher({
                       const checked = event.currentTarget.checked;
                       setIncludeParameterTokens(checked);
                       toggleTokenGroup(tokenGroups.parameterTokens, checked);
+                    }}
+                  />
+                  <Checkbox
+                    label='Manufacturer part'
+                    checked={includeManufacturerPartTokens}
+                    disabled={tokenGroups.manufacturerPartTokens.length === 0}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setIncludeManufacturerPartTokens(checked);
+                      toggleTokenGroup(
+                        tokenGroups.manufacturerPartTokens,
+                        checked
+                      );
+                    }}
+                  />
+                  <Checkbox
+                    label='Semantic hints'
+                    checked={includeSemanticTokens}
+                    disabled={tokenGroups.semanticTokens.length === 0}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setIncludeSemanticTokens(checked);
+                      toggleTokenGroup(tokenGroups.semanticTokens, checked);
                     }}
                   />
                 </Group>

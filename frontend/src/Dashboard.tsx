@@ -106,7 +106,7 @@ function SupplierScoutDashboardItem({
   }, [metricsUrl]);
 
   function formatCache(cacheStatus: SupplierDashboardMetrics['cache_status']) {
-    if (!cacheStatus || cacheStatus.enabled !== true) {
+    if (cacheStatus?.enabled !== true) {
       return 'Disabled';
     }
 

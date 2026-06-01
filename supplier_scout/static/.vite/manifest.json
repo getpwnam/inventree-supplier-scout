@@ -3,23 +3,9 @@
     "file": "assets/StoredTableState-Db-JLS3K.js",
     "name": "StoredTableState"
   },
-  "src/Dashboard.tsx": {
-    "file": "Dashboard-BhOimq1y.js",
-    "name": "Dashboard",
-    "src": "src/Dashboard.tsx",
-    "isEntry": true,
-    "imports": [
-      "_StoredTableState-Db-JLS3K.js"
-    ]
-  },
-  "src/Panel.tsx": {
-    "file": "Panel-BfqWzLZk.js",
-    "name": "Panel",
-    "src": "src/Panel.tsx",
-    "isEntry": true,
-    "imports": [
-      "_StoredTableState-Db-JLS3K.js"
-    ],
+  "_locale-BKh4n2ad.js": {
+    "file": "assets/locale-BKh4n2ad.js",
+    "name": "locale",
     "dynamicImports": [
       "src/locales/de/messages.ts",
       "src/locales/en/messages.ts",
@@ -33,11 +19,34 @@
       "src/locales/zh_Hant/messages.ts"
     ]
   },
+  "src/Dashboard.tsx": {
+    "file": "Dashboard-CgNeONYJ.js",
+    "name": "Dashboard",
+    "src": "src/Dashboard.tsx",
+    "isEntry": true,
+    "imports": [
+      "_StoredTableState-Db-JLS3K.js"
+    ]
+  },
+  "src/Panel.tsx": {
+    "file": "Panel-D2pAmW7a.js",
+    "name": "Panel",
+    "src": "src/Panel.tsx",
+    "isEntry": true,
+    "imports": [
+      "_StoredTableState-Db-JLS3K.js",
+      "_locale-BKh4n2ad.js"
+    ]
+  },
   "src/Settings.tsx": {
-    "file": "Settings-LCOVBM_Z.js",
+    "file": "Settings-C1kc6V5C.js",
     "name": "Settings",
     "src": "src/Settings.tsx",
-    "isEntry": true
+    "isEntry": true,
+    "imports": [
+      "_StoredTableState-Db-JLS3K.js",
+      "_locale-BKh4n2ad.js"
+    ]
   },
   "src/locales/de/messages.ts": {
     "file": "assets/messages-DDUE-gx7.js",

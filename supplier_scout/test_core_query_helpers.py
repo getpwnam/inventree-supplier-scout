@@ -720,6 +720,61 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         self.assertEqual(response["errors"], 0)
         self.assertEqual(fake_part.updated, 1)
 
+    def test_apply_candidates_refreshes_part_pricing_for_multiple_candidates(self):
+        class FakePart:
+            def __init__(self):
+                self.updated = 0
+
+            def update_pricing(self):
+                self.updated += 1
+
+        class FakeQueryResult:
+            def __init__(self, part=None):
+                self._part = part
+
+            def first(self):
+                return self._part
+
+        fake_part = FakePart()
+        fake_supplier = types.SimpleNamespace(pk=7)
+
+        request = types.SimpleNamespace(user=types.SimpleNamespace())
+        self.scout._decode_json_body = lambda _request: {
+            "pk": 1,
+            "supplier": 7,
+            "candidates": [
+                {"supplier_part_number": "SKU-1"},
+                {"supplier_part_number": "SKU-2"},
+            ],
+        }
+
+        with (
+            patch("supplier_scout.core.check_user_role", return_value=True),
+            patch(
+                "supplier_scout.core.Part.objects.filter",
+                return_value=FakeQueryResult(fake_part),
+            ),
+            patch(
+                "supplier_scout.core.Company.objects.filter",
+                return_value=FakeQueryResult(fake_supplier),
+            ),
+            patch.object(
+                self.scout,
+                "_upsert_supplier_part_candidate",
+                side_effect=[
+                    {"status": "created", "supplier_part_pk": 11, "sku": "SKU-1"},
+                    {"status": "created", "supplier_part_pk": 12, "sku": "SKU-2"},
+                ],
+            ),
+        ):
+            response = self.scout.apply_candidates(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["created"], 2)
+        self.assertEqual(response["updated"], 0)
+        self.assertEqual(response["errors"], 0)
+        self.assertEqual(fake_part.updated, 1)
+
     def test_search_candidates_all_suppliers_records_supplier_failures(self):
         class FakePartManager:
             def filter(self, **kwargs):

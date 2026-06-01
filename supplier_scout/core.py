@@ -2715,6 +2715,33 @@ class SupplierScout(
                         "message": f"Part pricing refresh failed: {exc}",
                     })
 
+            if errors > 0:
+                first_error = next(
+                    (
+                        str(item.get("message") or "")
+                        for item in results
+                        if str(item.get("status") or "").lower() == "error"
+                    ),
+                    "",
+                )
+                logger.warning(
+                    "apply_candidates completed with errors for part=%s supplier=%s created=%s updated=%s errors=%s first_error=%s",
+                    part_pk,
+                    supplier_pk,
+                    created,
+                    updated,
+                    errors,
+                    first_error,
+                )
+            else:
+                logger.info(
+                    "apply_candidates completed part=%s supplier=%s created=%s updated=%s",
+                    part_pk,
+                    supplier_pk,
+                    created,
+                    updated,
+                )
+
             return JsonResponse({
                 "message": "OK",
                 "created": created,

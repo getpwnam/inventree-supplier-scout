@@ -524,12 +524,17 @@ class BaseSupplierAdapter:
         return str(candidate.get("datasheet_url") or "").strip()
 
     def build_supplier_part_update_data(self, candidate):
+        pack_quantity = candidate.get("pack_quantity")
+        pack_quantity_text = str(
+            pack_quantity if pack_quantity not in [None, ""] else 1
+        )
+
         return {
-            "link": candidate.get("supplier_link") or "",
-            "note": candidate.get("lifecycle_status") or "",
-            "packaging": candidate.get("packaging") or "",
-            "pack_quantity": candidate.get("pack_quantity") or 1,
-            "description": candidate.get("description") or "",
+            "link": str(candidate.get("supplier_link") or ""),
+            "note": str(candidate.get("lifecycle_status") or ""),
+            "packaging": str(candidate.get("packaging") or ""),
+            "pack_quantity": pack_quantity_text.strip(),
+            "description": str(candidate.get("description") or ""),
         }
 
 

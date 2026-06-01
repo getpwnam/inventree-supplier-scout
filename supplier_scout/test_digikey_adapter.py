@@ -110,6 +110,19 @@ class TestDigikeySupplierAdapter(unittest.TestCase):
             "global-client-secret",
         )
 
+    def test_build_supplier_part_update_data_coerces_pack_quantity_to_string(self):
+        adapter = DigikeySupplierAdapter(DummyPlugin())
+
+        update_data = adapter.build_supplier_part_update_data({
+            "supplier_link": "https://example.invalid/part",
+            "lifecycle_status": "Active",
+            "packaging": "Tape",
+            "pack_quantity": 1,
+            "description": "Cached candidate",
+        })
+
+        self.assertEqual(update_data["pack_quantity"], "1")
+
     def test_has_search_credentials_requires_both_client_id_and_secret(self):
         adapter = DigikeySupplierAdapter(
             DummyPlugin(
@@ -461,10 +474,12 @@ class TestDigikeySupplierAdapter(unittest.TestCase):
 
     def test_daily_api_limit_blocks_when_exceeded(self):
         adapter = DigikeySupplierAdapter(
-            DummyPlugin(settings={
-                "DIGIKEY_API_RATE_LIMIT_PER_SECOND": 0,
-                "DIGIKEY_API_DAILY_LIMIT": 2,
-            })
+            DummyPlugin(
+                settings={
+                    "DIGIKEY_API_RATE_LIMIT_PER_SECOND": 0,
+                    "DIGIKEY_API_DAILY_LIMIT": 2,
+                }
+            )
         )
 
         adapter.enforce_api_rate_limits(cost=1)

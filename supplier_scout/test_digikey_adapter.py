@@ -199,6 +199,42 @@ class TestDigikeySupplierAdapter(unittest.TestCase):
 
     @patch("supplier_scout.mouser.get_language")
     @patch("supplier_scout.mouser.InvenTreeSetting")
+    def test_candidate_product_link_includes_site_language_currency(
+        self, mock_setting, mock_get_language
+    ):
+        mock_get_language.return_value = "en-gb"
+        mock_setting.get_setting.return_value = "GBP"
+
+        adapter = DigikeySupplierAdapter(
+            DummyPlugin(
+                settings={
+                    "DIGIKEY_CLIENT_ID": "global-client-id",
+                    "DIGIKEY_CLIENT_SECRET": "global-client-secret",
+                }
+            )
+        )
+
+        candidate = adapter._build_candidate_from_product({
+            "ProductUrl": "https://www.digikey.com/en/products/detail/acme/abc/123",
+            "Description": {"ProductDescription": "Test"},
+            "Manufacturer": {"Name": "Acme"},
+            "ProductVariations": [
+                {
+                    "DigiKeyProductNumber": "123-ABC-ND",
+                    "PackageType": {"Name": "Cut Tape"},
+                    "StandardPricing": [
+                        {"BreakQuantity": 1, "UnitPrice": 1.23},
+                    ],
+                }
+            ],
+        })
+
+        link = str(candidate.get("supplier_link") or "")
+        self.assertIn("www.digikey.co.uk", link)
+        self.assertNotIn("?", link)
+
+    @patch("supplier_scout.mouser.get_language")
+    @patch("supplier_scout.mouser.InvenTreeSetting")
     def test_post_locale_headers_follow_language_and_currency(
         self, mock_setting, mock_get_language
     ):
@@ -222,6 +258,54 @@ class TestDigikeySupplierAdapter(unittest.TestCase):
         self.assertEqual(kwargs["headers"]["X-DIGIKEY-Locale-Language"], "en")
         self.assertEqual(kwargs["headers"]["X-DIGIKEY-Locale-Currency"], "EUR")
         self.assertEqual(kwargs["headers"]["X-DIGIKEY-Locale-Site"], "UK")
+
+    @patch("supplier_scout.mouser.get_language")
+    @patch("supplier_scout.mouser.InvenTreeSetting")
+    def test_candidate_product_link_uses_ireland_host(
+        self, mock_setting, mock_get_language
+    ):
+        mock_get_language.return_value = "en-ie"
+        mock_setting.get_setting.return_value = "EUR"
+
+        adapter = DigikeySupplierAdapter(
+            DummyPlugin(
+                settings={
+                    "DIGIKEY_CLIENT_ID": "global-client-id",
+                    "DIGIKEY_CLIENT_SECRET": "global-client-secret",
+                }
+            )
+        )
+
+        link = adapter._build_digikey_product_link(
+            "https://www.digikey.com/en/products/detail/yageo/CC0603KRX7R9BB221/302811"
+        )
+
+        self.assertIn("www.digikey.ie", link)
+        self.assertNotIn("?", link)
+
+    @patch("supplier_scout.mouser.get_language")
+    @patch("supplier_scout.mouser.InvenTreeSetting")
+    def test_candidate_product_link_uses_australia_host(
+        self, mock_setting, mock_get_language
+    ):
+        mock_get_language.return_value = "en-au"
+        mock_setting.get_setting.return_value = "AUD"
+
+        adapter = DigikeySupplierAdapter(
+            DummyPlugin(
+                settings={
+                    "DIGIKEY_CLIENT_ID": "global-client-id",
+                    "DIGIKEY_CLIENT_SECRET": "global-client-secret",
+                }
+            )
+        )
+
+        link = adapter._build_digikey_product_link(
+            "https://www.digikey.com/en/products/detail/yageo/CC0603KRX7R9BB221/302811"
+        )
+
+        self.assertIn("www.digikey.com.au", link)
+        self.assertNotIn("?", link)
 
 
 if __name__ == "__main__":

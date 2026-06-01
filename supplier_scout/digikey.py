@@ -1,6 +1,8 @@
 """DigiKey supplier adapter."""
 
 import time
+from urllib.parse import urlparse
+from urllib.parse import urlunparse
 
 try:
     from django.utils.translation import gettext_lazy as _  # type: ignore[import-not-found]
@@ -112,6 +114,38 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
         "GB": "UK",
     }
 
+    DIGIKEY_SITE_HOSTS = {
+        "US": "www.digikey.com",
+        "UK": "www.digikey.co.uk",
+        "IE": "www.digikey.ie",
+        "DE": "www.digikey.de",
+        "FR": "www.digikey.fr",
+        "IT": "www.digikey.it",
+        "ES": "www.digikey.es",
+        "NL": "www.digikey.nl",
+        "SE": "www.digikey.se",
+        "NO": "www.digikey.no",
+        "DK": "www.digikey.dk",
+        "FI": "www.digikey.fi",
+        "CH": "www.digikey.ch",
+        "AT": "www.digikey.at",
+        "BE": "www.digikey.be",
+        "PL": "www.digikey.pl",
+        "CZ": "www.digikey.cz",
+        "HU": "www.digikey.hu",
+        "RO": "www.digikey.ro",
+        "PT": "www.digikey.pt",
+        "CA": "www.digikey.ca",
+        "AU": "www.digikey.com.au",
+        "NZ": "www.digikey.co.nz",
+        "SG": "www.digikey.sg",
+        "HK": "www.digikey.hk",
+        "JP": "www.digikey.co.jp",
+        "KR": "www.digikey.kr",
+        "TW": "www.digikey.com.tw",
+        "CN": "www.digikey.cn",
+    }
+
     def __init__(self, plugin):
         super().__init__(plugin)
         self.transport = SupplierAPIClient(
@@ -218,6 +252,28 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
     def _get_digikey_site_code(self):
         site = str(self._get_locale_country_code() or "US").upper()
         return self.DIGIKEY_SITE_OVERRIDES.get(site, site)
+
+    def _get_digikey_link_language_code(self):
+        language = str(self._get_locale_language_code() or "en").lower()
+        if language == "zhs":
+            return "zh-cn"
+        if language == "zht":
+            return "zh-tw"
+        return language
+
+    def _build_digikey_product_link(self, product_url):
+        url_text = str(product_url or "").strip()
+        if url_text == "":
+            return ""
+
+        parsed = urlparse(url_text)
+        site_code = str(self._get_digikey_site_code() or "US").upper()
+
+        host = self.DIGIKEY_SITE_HOSTS.get(site_code)
+        if host:
+            parsed = parsed._replace(netloc=host)
+
+        return urlunparse(parsed._replace(query=""))
 
     def _build_search_url(self, user=None):
         del user
@@ -340,13 +396,11 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
             except Exception:
                 price_value = 0
 
-            price_breaks.append(
-                {
-                    "quantity": qty,
-                    "price": price_value,
-                    "currency": self._get_locale_currency_code(),
-                }
-            )
+            price_breaks.append({
+                "quantity": qty,
+                "price": price_value,
+                "currency": self._get_locale_currency_code(),
+            })
 
             if min_price is None or price_value < min_price:
                 min_price = price_value
@@ -383,7 +437,9 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
             "supplier_part_number": supplier_part_number,
             "manufacturer_part_number": product_data.get("ManufacturerProductNumber"),
             "manufacturer_name": manufacturer.get("Name"),
-            "supplier_link": product_data.get("ProductUrl"),
+            "supplier_link": self._build_digikey_product_link(
+                product_data.get("ProductUrl")
+            ),
             "datasheet_url": product_data.get("DatasheetUrl") or "",
             "image_url": product_data.get("PhotoUrl") or "",
             "lifecycle_status": "",
@@ -425,13 +481,11 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
                 self._build_keyword_url(user=user),
                 keyword_payload,
             )
-            attempts.append(
-                {
-                    "mode": "keyword",
-                    "status": result.get("error_status"),
-                    "result_count": len(result.get("products", [])),
-                }
-            )
+            attempts.append({
+                "mode": "keyword",
+                "status": result.get("error_status"),
+                "result_count": len(result.get("products", [])),
+            })
 
             if result.get("error_status") == "OK":
                 for product_data in result.get("products", []):

@@ -3,7 +3,8 @@
 import json
 import re
 import time
-import zlib
+import hashlib
+import os
 from pathlib import Path
 
 from common.models import InvenTreeSetting
@@ -187,13 +188,23 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         """Return the cache directory path, creating it if necessary."""
         cache_dir = Path.home() / ".cache" / self.cache_dir_name
         cache_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(cache_dir, 0o700)
         return cache_dir
 
     def _build_cache_key(self, url, payload):
         """Build a unique cache key from URL and payload."""
         del url
-        key_str = json.dumps(payload, sort_keys=True)
-        return f"{zlib.crc32(key_str.encode()) & 0xFFFFFFFF:08x}"
+        normalized_key_data = {
+            "currency": self._get_locale_currency_code(),
+            "country": self._get_locale_country_code(),
+            "request_type": sorted(self._coerce_mapping(payload).keys()),
+            "payload": payload,
+        }
+        key_str = json.dumps(
+            normalized_key_data,
+            sort_keys=True,
+        )
+        return hashlib.sha256(key_str.encode("utf-8")).hexdigest()
 
     def _get_cache_ttl_seconds(self):
         """Get cache TTL in seconds from settings."""
@@ -243,6 +254,7 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
             cache_key = self._build_cache_key(url, payload)
             cache_file = self._get_cache_dir() / f"{cache_key}.json"
             cache_file.write_text(json.dumps(response_data, indent=2))
+            os.chmod(cache_file, 0o600)
         except (OSError, json.JSONDecodeError):
             # Silently fail if cache write fails
             pass

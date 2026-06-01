@@ -24,9 +24,7 @@
   "peerDependencies": {},
   "devDependencies": {
     "@biomejs/biome": "2.0.0",
-    "@lingui/swc-plugin": "latest",
     "@lingui/vite-plugin": "latest",
-    "@vitejs/plugin-react-swc": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "^4.7.0",

@@ -44,7 +44,7 @@ export default defineConfig({
     target: 'esnext',
     cssCodeSplit: false,
     manifest: true,
-    sourcemap: true,
+    sourcemap: false,
     rollupOptions: {
       preserveEntrySignatures: "exports-only",
       input: [

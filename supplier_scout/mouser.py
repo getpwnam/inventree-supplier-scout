@@ -140,6 +140,49 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         global_key = self.get_setting(self.search_api_key_setting, backup_value="")
         return str(global_key).strip()
 
+    def _get_locale_currency_code(self):
+        currency = str(
+            InvenTreeSetting.get_setting("INVENTREE_DEFAULT_CURRENCY") or "USD"
+        ).strip()
+        currency = currency.upper()
+        if len(currency) != 3 or not currency.isalpha():
+            return "USD"
+        return currency
+
+    def _get_inventree_language(self):
+        language = str(get_language() or "").strip()
+        if language == "":
+            language = "en-us"
+        return language
+
+    def _get_locale_language_code(self):
+        language = self._get_inventree_language().lower().replace("_", "-")
+
+        if language in ["zh-hans", "zh-cn", "zhs"]:
+            return "zhs"
+        if language in ["zh-hant", "zh-tw", "zht"]:
+            return "zht"
+
+        base = language.split("-")[0]
+        if len(base) == 2 and base.isalpha():
+            return base
+
+        return "en"
+
+    def _get_locale_country_code(self):
+        language = self._get_inventree_language().lower().replace("_", "-")
+        chunks = [chunk for chunk in language.split("-") if chunk]
+
+        if len(chunks) >= 2:
+            region = chunks[-1].upper()
+            if len(region) == 2 and region.isalpha():
+                if region == "UK":
+                    return "GB"
+                return region
+
+        currency = self._get_locale_currency_code()
+        return self.COUNTRY_CODES.get(currency, "US")
+
     def _get_cache_dir(self):
         """Return the cache directory path, creating it if necessary."""
         cache_dir = Path.home() / ".cache" / self.cache_dir_name
@@ -259,8 +302,8 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
 
     def _build_search_url(self, user=None):
         api_key = self._get_search_api_key(user=user)
-        currency = InvenTreeSetting.get_setting("INVENTREE_DEFAULT_CURRENCY")
-        country = self.COUNTRY_CODES.get(currency, "US")
+        currency = self._get_locale_currency_code()
+        country = self._get_locale_country_code()
         return (
             self.SEARCH_ENDPOINT
             + "?apiKey="
@@ -273,8 +316,8 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
 
     def _build_keyword_url(self, user=None):
         api_key = self._get_search_api_key(user=user)
-        currency = InvenTreeSetting.get_setting("INVENTREE_DEFAULT_CURRENCY")
-        country = self.COUNTRY_CODES.get(currency, "US")
+        currency = self._get_locale_currency_code()
+        country = self._get_locale_country_code()
         return (
             self.KEYWORD_ENDPOINT
             + "?apiKey="

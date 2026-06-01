@@ -1,5 +1,7 @@
 """DigiKey supplier adapter."""
 
+import json
+import logging
 import time
 
 try:
@@ -11,7 +13,11 @@ except Exception:  # pragma: no cover - fallback for isolated unit tests
 
 
 from .adapters import SupplierAPIClient
+from .adapters import SupplierAPIRateLimitError
 from .mouser import MouserSupplierAdapter
+
+
+logger = logging.getLogger("supplier_scout.digikey")
 
 
 DIGIKEY_CLIENT_ID_SETTING = "DIGIKEY_CLIENT_ID"
@@ -101,9 +107,15 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
     max_price_quantity_setting = "DIGIKEY_MAX_PRICE_QUANTITY"
     cache_ttl_setting = "DIGIKEY_CACHE_TTL"
     cache_dir_name = "inventree_digikey"
-    SEARCH_ENDPOINT = "https://api.digikey.com/services/partsearch/v3/partnumbersearch"
-    KEYWORD_ENDPOINT = "https://api.digikey.com/services/partsearch/v3/keywordsearch"
+    # DigiKey Product Information API v4 exposes keyword search at this route.
+    # MPN / DigiKey part numbers are supported as keyword inputs.
+    SEARCH_ENDPOINT = "https://api.digikey.com/products/v4/search/keyword"
+    KEYWORD_ENDPOINT = "https://api.digikey.com/products/v4/search/keyword"
     TOKEN_ENDPOINT = "https://api.digikey.com/v1/oauth2/token"
+
+    DIGIKEY_SITE_OVERRIDES = {
+        "GB": "UK",
+    }
 
     def __init__(self, plugin):
         super().__init__(plugin)
@@ -192,8 +204,20 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
         headers = self.transport.api_headers
         headers["Authorization"] = "Bearer " + access_token
         headers["X-DIGIKEY-Client-Id"] = client_id
+        headers["X-DIGIKEY-Locale-Language"] = self._get_locale_language_code()
+        headers["X-DIGIKEY-Locale-Currency"] = self._get_locale_currency_code()
+        headers["X-DIGIKEY-Locale-Site"] = self._get_digikey_site_code()
 
-        return self.transport.api_call(
+        logger.debug(
+            "DigiKey API request %s locale(language=%s, currency=%s, site=%s) payload=%s",
+            url,
+            headers.get("X-DIGIKEY-Locale-Language", ""),
+            headers.get("X-DIGIKEY-Locale-Currency", ""),
+            headers.get("X-DIGIKEY-Locale-Site", ""),
+            json.dumps(payload, ensure_ascii=True),
+        )
+
+        response = self.transport.api_call(
             url,
             method="POST",
             json=payload,
@@ -203,6 +227,30 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
             timeout=15,
         )
 
+        try:
+            status_code = int(getattr(response, "status_code", 0) or 0)
+        except Exception:
+            status_code = 0
+
+        if status_code >= 400:
+            try:
+                response_payload = response.json()
+            except Exception:
+                response_payload = str(getattr(response, "text", "") or "")
+
+            logger.debug(
+                "DigiKey API error response %s for %s: %s",
+                status_code,
+                url,
+                response_payload,
+            )
+
+        return response
+
+    def _get_digikey_site_code(self):
+        site = str(self._get_locale_country_code() or "US").upper()
+        return self.DIGIKEY_SITE_OVERRIDES.get(site, site)
+
     def _build_search_url(self, user=None):
         del user
         return self.SEARCH_ENDPOINT
@@ -211,17 +259,239 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
         del user
         return self.KEYWORD_ENDPOINT
 
+    def _search_digikey_products(self, url, payload):
+        # Try to get cached response
+        cached_data = self._get_cached_response(url, payload)
+        if cached_data is not None:
+            response_data = cached_data
+        else:
+            # Cache miss or disabled, fetch from API
+            try:
+                response = self._post(url, payload)
+            except SupplierAPIRateLimitError as exc:
+                return {
+                    "error_status": str(exc),
+                    "products": [],
+                }
+            except Exception:
+                return {
+                    "error_status": _("Connection to DigiKey API failed"),
+                    "products": [],
+                }
+
+            try:
+                response_data = response.json()
+            except Exception:
+                return {
+                    "error_status": _("Invalid JSON response from DigiKey"),
+                    "products": [],
+                }
+
+            # Cache the response for future requests
+            self._cache_response(url, payload, response_data)
+
+        try:
+            status_code = int(response_data.get("status") or 0)
+        except Exception:
+            status_code = 0
+
+        if status_code >= 400:
+            detail = str(response_data.get("detail") or "").strip()
+            title = str(response_data.get("title") or "").strip()
+            message = detail or title or _("DigiKey search error")
+            return {
+                "error_status": message,
+                "products": [],
+            }
+
+        errors = response_data.get("Errors") or []
+        if errors:
+            code = errors[0].get("Code")
+            message = errors[0].get("Message") or code or _("DigiKey search error")
+
+            if code in ["SearchNotFound", "NotFound"]:
+                return {"error_status": "OK", "products": []}
+
+            return {
+                "error_status": message,
+                "products": [],
+            }
+
+        products = response_data.get("Products") or []
+
+        return {
+            "error_status": "OK",
+            "products": products,
+        }
+
+    def _build_candidate_from_product(self, product_data, min_qty=None, max_qty=None):
+        price_breaks = []
+        min_price = None
+        filtered_price = None
+
+        if min_qty is None:
+            try:
+                min_qty_setting = (
+                    self.get_effective_setting(
+                        self.min_price_quantity_setting, user=self._request_user
+                    )
+                    or 1
+                )
+                min_qty = int(min_qty_setting) if min_qty_setting else 1
+            except (ValueError, TypeError):
+                min_qty = 1
+
+        if max_qty is None:
+            try:
+                max_qty_setting = (
+                    self.get_effective_setting(
+                        self.max_price_quantity_setting, user=self._request_user
+                    )
+                    or ""
+                )
+                max_qty = int(max_qty_setting) if max_qty_setting else None
+            except (ValueError, TypeError):
+                max_qty = None
+
+        variations = product_data.get("ProductVariations") or []
+        primary_variation = variations[0] if variations else {}
+        pricing = (
+            primary_variation.get("StandardPricing")
+            or product_data.get("StandardPricing")
+            or []
+        )
+
+        for price_break in pricing:
+            try:
+                qty = int(price_break.get("BreakQuantity") or 1)
+            except Exception:
+                qty = 1
+
+            try:
+                price_value = float(price_break.get("UnitPrice") or 0)
+            except Exception:
+                price_value = 0
+
+            price_breaks.append(
+                {
+                    "quantity": qty,
+                    "price": price_value,
+                    "currency": self._get_locale_currency_code(),
+                }
+            )
+
+            if min_price is None or price_value < min_price:
+                min_price = price_value
+
+        for price_break in price_breaks:
+            qty = price_break.get("quantity", 1)
+            if qty >= min_qty and (max_qty is None or qty <= max_qty):
+                filtered_price = price_break.get("price")
+                break
+
+        description = product_data.get("Description") or {}
+        manufacturer = product_data.get("Manufacturer") or {}
+        package_type = primary_variation.get("PackageType") or {}
+
+        supplier_part_number = str(
+            primary_variation.get("DigiKeyProductNumber")
+            or product_data.get("DigiKeyProductNumber")
+            or ""
+        ).strip()
+
+        available_quantity = (
+            primary_variation.get("QuantityAvailableForPackageType")
+            or primary_variation.get("QuantityAvailable")
+            or product_data.get("QuantityAvailable")
+            or 0
+        )
+
+        try:
+            available_quantity = int(available_quantity)
+        except Exception:
+            available_quantity = self._extract_stock_qty(available_quantity)
+
+        return {
+            "supplier_part_number": supplier_part_number,
+            "manufacturer_part_number": product_data.get("ManufacturerProductNumber"),
+            "manufacturer_name": manufacturer.get("Name"),
+            "supplier_link": product_data.get("ProductUrl"),
+            "datasheet_url": product_data.get("DatasheetUrl") or "",
+            "image_url": product_data.get("PhotoUrl") or "",
+            "lifecycle_status": "",
+            "description": description.get("ProductDescription")
+            or description.get("DetailedDescription")
+            or "",
+            "pack_quantity": 1,
+            "packaging": package_type.get("Name") or "",
+            "price_breaks": price_breaks,
+            "unit_price": filtered_price if filtered_price is not None else min_price,
+            "available_quantity": available_quantity,
+            "spec_attributes": {},
+        }
+
     def get_candidates(
         self, query, max_results=25, user=None, min_qty=None, max_qty=None
     ):
         self._request_user = user
         try:
-            return super().get_candidates(
-                query=query,
-                max_results=max_results,
-                user=user,
-                min_qty=min_qty,
-                max_qty=max_qty,
+            query = str(query or "").strip()
+            if query == "":
+                return {
+                    "error_status": _("Search query cannot be empty"),
+                    "candidates": [],
+                    "debug": {},
+                }
+
+            keyword_payload = {
+                "Keywords": query,
+                "Limit": max(int(max_results), 1),
+                "Offset": 0,
+            }
+
+            seen = set()
+            candidates = []
+            attempts = []
+
+            result = self._search_digikey_products(
+                self._build_keyword_url(user=user),
+                keyword_payload,
             )
+            attempts.append(
+                {
+                    "mode": "keyword",
+                    "status": result.get("error_status"),
+                    "result_count": len(result.get("products", [])),
+                }
+            )
+
+            if result.get("error_status") == "OK":
+                for product_data in result.get("products", []):
+                    candidate = self._build_candidate_from_product(
+                        product_data,
+                        min_qty=min_qty,
+                        max_qty=max_qty,
+                    )
+                    supplier_part_number = str(
+                        candidate.get("supplier_part_number") or ""
+                    ).strip()
+                    if not supplier_part_number or supplier_part_number in seen:
+                        continue
+
+                    seen.add(supplier_part_number)
+                    candidates.append(candidate)
+
+                    if len(candidates) >= max(int(max_results), 1):
+                        break
+
+            return {
+                "error_status": "OK",
+                "candidates": candidates,
+                "debug": {
+                    "attempts": attempts,
+                    "max_results": int(max_results),
+                    "returned_candidates": len(candidates),
+                },
+            }
         finally:
             self._request_user = None

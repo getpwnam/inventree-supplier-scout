@@ -4,6 +4,7 @@ import sys
 import types
 import unittest
 from unittest.mock import MagicMock
+from unittest.mock import patch
 
 
 def _install_inventree_stubs():
@@ -137,7 +138,7 @@ class TestDigikeySupplierAdapter(unittest.TestCase):
         adapter.transport.api_call = MagicMock(return_value=MagicMock())
         adapter._get_oauth_access_token = MagicMock(return_value="access-token")
 
-        adapter._post("https://api.digikey.com/services/partsearch/v3/keywordsearch", {})
+        adapter._post("https://api.digikey.com/products/v4/search/keyword", {})
 
         _, kwargs = adapter.transport.api_call.call_args
         self.assertEqual(
@@ -148,6 +149,79 @@ class TestDigikeySupplierAdapter(unittest.TestCase):
             kwargs["headers"]["X-DIGIKEY-Client-Id"],
             "global-client-id",
         )
+        self.assertEqual(kwargs["headers"]["X-DIGIKEY-Locale-Language"], "en")
+        self.assertEqual(kwargs["headers"]["X-DIGIKEY-Locale-Currency"], "USD")
+        self.assertEqual(kwargs["headers"]["X-DIGIKEY-Locale-Site"], "US")
+
+    def test_get_candidates_uses_v4_keyword_payload_shape(self):
+        adapter = DigikeySupplierAdapter(
+            DummyPlugin(
+                settings={
+                    "DIGIKEY_CLIENT_ID": "global-client-id",
+                    "DIGIKEY_CLIENT_SECRET": "global-client-secret",
+                }
+            )
+        )
+        adapter._search_digikey_products = MagicMock(
+            return_value={"error_status": "OK", "products": []}
+        )
+
+        adapter.get_candidates("STM32", max_results=7)
+
+        _, payload = adapter._search_digikey_products.call_args[0]
+        self.assertEqual(payload.get("Keywords"), "STM32")
+        self.assertEqual(payload.get("Limit"), 7)
+        self.assertEqual(payload.get("Offset"), 0)
+
+    def test_search_digikey_products_returns_problem_detail_message(self):
+        adapter = DigikeySupplierAdapter(
+            DummyPlugin(
+                settings={
+                    "DIGIKEY_CLIENT_ID": "global-client-id",
+                    "DIGIKEY_CLIENT_SECRET": "global-client-secret",
+                }
+            )
+        )
+        adapter._get_cached_response = MagicMock(
+            return_value={
+                "status": 400,
+                "detail": "'Keywords' must not be empty.",
+            }
+        )
+
+        result = adapter._search_digikey_products(
+            adapter.KEYWORD_ENDPOINT,
+            {"Keywords": ""},
+        )
+
+        self.assertEqual(result.get("error_status"), "'Keywords' must not be empty.")
+        self.assertEqual(result.get("products"), [])
+
+    @patch("supplier_scout.mouser.get_language")
+    @patch("supplier_scout.mouser.InvenTreeSetting")
+    def test_post_locale_headers_follow_language_and_currency(
+        self, mock_setting, mock_get_language
+    ):
+        mock_get_language.return_value = "en-gb"
+        mock_setting.get_setting.return_value = "EUR"
+
+        adapter = DigikeySupplierAdapter(
+            DummyPlugin(
+                settings={
+                    "DIGIKEY_CLIENT_ID": "global-client-id",
+                    "DIGIKEY_CLIENT_SECRET": "global-client-secret",
+                }
+            )
+        )
+        adapter.transport.api_call = MagicMock(return_value=MagicMock())
+        adapter._get_oauth_access_token = MagicMock(return_value="access-token")
+
+        adapter._post("https://api.digikey.com/products/v4/search/keyword", {})
+
+        _, kwargs = adapter.transport.api_call.call_args
+        self.assertEqual(kwargs["headers"]["X-DIGIKEY-Locale-Language"], "en")
+        self.assertEqual(kwargs["headers"]["X-DIGIKEY-Locale-Currency"], "EUR")
+        self.assertEqual(kwargs["headers"]["X-DIGIKEY-Locale-Site"], "UK")
 
 
 if __name__ == "__main__":

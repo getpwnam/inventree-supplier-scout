@@ -37,6 +37,7 @@ type Supplier = {
 
 type Candidate = {
   supplier_part_number?: string;
+  manufacturer_name?: string;
   manufacturer_part_number?: string;
   description?: string;
   available_quantity?: number;

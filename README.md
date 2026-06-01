@@ -10,13 +10,14 @@
 - **Scheduled resync** — periodically refreshes existing supplier-part metadata and price breaks in the background, with per-supplier interval and batch-size controls.
 - **Response caching** — caches API responses to reduce quota usage and improve responsiveness.
 - **API usage tracking** — per-supplier request counters and daily-limit enforcement with a dashboard widget showing live metrics.
-- **Per-user API keys** — users can store their own supplier API keys, overriding the global key for their own searches.
+- **Per-user supplier credentials** — users can store their own supplier credentials (API key or OAuth2 client credentials), overriding global settings for their own searches.
 - **Token debug endpoint** — inspect exactly which tokens were extracted from a part and how the final search query was constructed.
 
 ## Supported Suppliers
 
 | Supplier | Search | Scheduled Resync | Notes |
 |---|---|---|---|
+| **DigiKey** | ✅ | ✅ | Uses DigiKey OAuth2 client credentials (`client_id` + `client_secret`) for authenticated API access |
 | **Mouser Electronics** | ✅ | ✅ | Part-number and keyword search; response caching; per-user API keys |
 
 Additional suppliers can be added by implementing a `BaseSupplierAdapter` subclass.
@@ -51,8 +52,10 @@ pip install -e .
 After activating the plugin, you must configure at least one supplier before you can search:
 
 1. Open **Settings → Plugins** and click on **Supplier Scout → Plugin Settings**.
-2. Set the **Mouser Supplier ID** (`MOUSER_PK`) to the primary key of your Mouser company record in InvenTree. If you have not added Mouser as a supplier yet, create it in **Purchasing → Suppliers** first.
-3. Set the **Mouser search API key** (`MOUSER_APIKEY_SEARCH`). Obtain a free API key from the [Mouser API portal](https://www.mouser.com/api-hub/).
+2. Set either **DigiKey Supplier ID** (`DIGIKEY_PK`) or **Mouser Supplier ID** (`MOUSER_PK`) to the primary key of your supplier company record in InvenTree.
+3. Set credentials for your chosen supplier:
+   - DigiKey: `DIGIKEY_CLIENT_ID` and `DIGIKEY_CLIENT_SECRET`
+   - Mouser: `MOUSER_APIKEY_SEARCH`
 4. Save. The *Supplier Match* action will now appear on every purchaseable part.
 
 ## Usage
@@ -160,6 +163,22 @@ Settings are managed through the InvenTree plugin settings UI (**Settings → Pl
 
 - **Global** — applies to all users; set by an administrator in plugin settings.
 - **User** — per-user override; each user sets their own value in their personal plugin settings. An empty value falls back to the global setting.
+
+### DigiKey
+
+| Setting key | Scope | Default | Description |
+|---|---|---|---|
+| `DIGIKEY_PK` | Global | — | Primary key of the DigiKey supplier company record in InvenTree. Must be set before search works. |
+| `DIGIKEY_CLIENT_ID` | Global | — | Global DigiKey OAuth2 client ID. |
+| `DIGIKEY_CLIENT_ID` | User | — | Per-user DigiKey OAuth2 client ID override. |
+| `DIGIKEY_CLIENT_SECRET` | Global | — | Global DigiKey OAuth2 client secret. Stored encrypted. |
+| `DIGIKEY_CLIENT_SECRET` | User | — | Per-user DigiKey OAuth2 client secret override. Stored encrypted. |
+| `DIGIKEY_MAX_CANDIDATES` | Global | `40` | Maximum number of raw DigiKey results fetched before ranking. |
+| `DIGIKEY_MIN_PRICE_QUANTITY` | Global | `1` | Minimum quantity used when selecting the best price break. |
+| `DIGIKEY_MIN_PRICE_QUANTITY` | User | — | User override for the minimum price quantity. |
+| `DIGIKEY_MAX_PRICE_QUANTITY` | Global | *(empty)* | Upper bound for price-break quantity selection. |
+| `DIGIKEY_MAX_PRICE_QUANTITY` | User | — | User override for the maximum price quantity. |
+| `DIGIKEY_CACHE_TTL` | Global | `3600` | How long (in seconds) to cache DigiKey API responses on disk. Set to `0` to disable caching. Cache files are stored in `~/.cache/inventree_digikey/`. |
 
 ### Mouser Electronics
 

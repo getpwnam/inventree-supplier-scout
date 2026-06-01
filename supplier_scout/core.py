@@ -36,6 +36,7 @@ from . import PLUGIN_VERSION
 from .adapters import build_supplier_settings
 from .adapters import build_supplier_schedule_settings
 from .adapters import build_supplier_user_settings
+from .digikey import DigikeySupplierAdapter
 from .mouser import MouserSupplierAdapter
 
 
@@ -63,6 +64,7 @@ class SupplierScout(
     ADMIN_SOURCE = "Settings.js:renderPluginSettings"
 
     SUPPLIER_ADAPTERS = {
+        "digikey": DigikeySupplierAdapter,
         "mouser": MouserSupplierAdapter,
     }
 
@@ -2389,10 +2391,14 @@ class SupplierScout(
 
             supplier_pk = None
             raw_supplier = data.get("supplier")
-            if raw_supplier not in [None, ""]:
+            raw_supplier_text = str(raw_supplier or "").strip().lower()
+            if raw_supplier_text not in ["", "0", "all", "*"]:
                 try:
                     supplier_pk = int(raw_supplier)
                 except Exception:
+                    return JsonResponse({"message": "Invalid supplier id"})
+
+                if supplier_pk <= 0:
                     return JsonResponse({"message": "Invalid supplier id"})
 
             try:
@@ -2448,41 +2454,51 @@ class SupplierScout(
 
             if supplier_pk is None:
                 registrations = self._get_search_ready_suppliers(user=request.user)
-                if len(registrations) == 0:
-                    return JsonResponse({
-                        "message": "No configured suppliers available for search"
-                    })
             else:
                 registration = self._get_supplier_registration(supplier_pk)
-                if registration is None:
-                    return JsonResponse({"message": "Unknown supplier"})
-                registrations = [registration]
+                registrations = [registration] if registration is not None else []
 
-            supplier_adapters = {}
-            normalized_candidates = []
+            if not registrations:
+                return JsonResponse({"message": "No search-ready suppliers configured"})
+
+            supplier_attempts = []
             supplier_failures = []
+            all_candidates = []
+            ranked = []
 
             for registration in registrations:
-                try:
-                    registration_pk = int(registration.get("pk") or 0)
-                except Exception:
-                    registration_pk = 0
-
+                registration_key = registration.get("key")
+                registration_pk = int(registration.get("pk") or 0)
                 if registration_pk <= 0:
                     continue
 
-                adapter = self._get_supplier_definition(registration.get("key"))
+                adapter = self._get_supplier_definition(registration_key)
                 if adapter is None:
                     supplier_failures.append({
+                        "supplier_key": registration_key,
                         "supplier_pk": registration_pk,
-                        "supplier": registration.get("name")
-                        or registration.get("key")
-                        or "unknown",
                         "message": "Unknown supplier adapter",
                     })
                     continue
 
-                supplier_adapters[registration_pk] = adapter
+                has_search_credentials = getattr(
+                    adapter, "has_search_credentials", None
+                )
+                if callable(has_search_credentials) and not has_search_credentials(
+                    user=request.user
+                ):
+                    supplier_failures.append({
+                        "supplier_key": registration_key,
+                        "supplier_pk": registration_pk,
+                        "message": "Missing credentials",
+                    })
+                    supplier_attempts.append({
+                        "supplier_key": registration_key,
+                        "supplier_pk": registration_pk,
+                        "status": "Missing credentials",
+                        "result_count": 0,
+                    })
+                    continue
 
                 max_candidates = self._get_supplier_max_candidates(
                     registration_pk, default=40
@@ -2496,70 +2512,84 @@ class SupplierScout(
                     max_qty=max_qty,
                 )
 
+                supplier_attempts.append({
+                    "supplier_key": registration_key,
+                    "supplier_pk": registration_pk,
+                    "status": response.get("error_status"),
+                    "result_count": len(response.get("candidates", [])),
+                })
+
                 if response.get("error_status") != "OK":
                     supplier_failures.append({
+                        "supplier_key": registration_key,
                         "supplier_pk": registration_pk,
-                        "supplier": registration.get("name")
-                        or registration.get("key")
-                        or "unknown",
                         "message": response.get(
                             "error_status", "Candidate search failed"
                         ),
                     })
                     continue
 
+                normalized_candidates = []
                 for candidate in response.get("candidates", []):
                     normalized = adapter.normalize_candidate(candidate)
                     normalized["_supplier_pk"] = registration_pk
-                    normalized["_supplier_key"] = registration.get("key")
+                    normalized["_supplier_key"] = registration_key
                     normalized["_supplier_name"] = registration.get("name")
                     normalized_candidates.append(normalized)
 
-            if len(normalized_candidates) == 0:
-                return JsonResponse({
-                    "message": "No supplier matches returned for the current query",
-                    "debug": {
-                        "tokens": token_data.get("tokens", []),
-                        "token_sources": token_data.get("sources", []),
-                        "token_attribution": token_data.get("token_attribution", {}),
-                        "semantic_hints": semantic_hints,
-                        "numeric_constraints": numeric_constraints,
-                        "query": query,
-                        "supplier_failures": supplier_failures,
-                    },
-                })
+                if supplier_pk is None:
+                    supplier_ranked = self._rank_candidates(
+                        query=query,
+                        candidates=normalized_candidates,
+                        user=request.user,
+                        top_n=top_n,
+                        constraints=numeric_constraints,
+                    )
+                    ranked.extend(supplier_ranked)
+                else:
+                    all_candidates.extend(normalized_candidates)
 
-            ranked = self._rank_candidates(
-                query=query,
-                candidates=normalized_candidates,
-                user=request.user,
-                top_n=top_n,
-                constraints=numeric_constraints,
-            )
+            if supplier_pk is not None:
+                ranked = self._rank_candidates(
+                    query=query,
+                    candidates=all_candidates,
+                    user=request.user,
+                    top_n=top_n,
+                    constraints=numeric_constraints,
+                )
+
+            supplier_ids = sorted({
+                self._to_int_from_string(candidate.get("_supplier_pk"), default=0)
+                for candidate in ranked
+            })
+            supplier_ids = [
+                supplier_id for supplier_id in supplier_ids if supplier_id > 0
+            ]
 
             existing_supplier_parts = SupplierPart.objects.filter(
-                part=part, supplier_id__in=list(supplier_adapters.keys())
+                part=part, supplier_id__in=supplier_ids
             ).only("pk", "SKU", "supplier_id")
             existing_by_supplier_sku = {}
 
             for supplier_part in existing_supplier_parts:
                 sku_key = str(getattr(supplier_part, "SKU", "") or "").strip().lower()
-                supplier_id = int(getattr(supplier_part, "supplier_id", 0) or 0)
-                if sku_key and supplier_id > 0:
+                supplier_id = self._to_int_from_string(
+                    getattr(supplier_part, "supplier_id", 0), default=0
+                )
+                if supplier_id > 0 and sku_key:
                     existing_by_supplier_sku[(supplier_id, sku_key)] = supplier_part.pk
 
             for candidate in ranked:
-                candidate_supplier_pk = int(candidate.get("_supplier_pk") or 0)
-                adapter = supplier_adapters.get(candidate_supplier_pk)
-
-                existing_pk = None
-                if adapter is not None:
-                    sku = adapter.get_candidate_supplier_part_number(candidate)
-                    existing_pk = existing_by_supplier_sku.get((
-                        candidate_supplier_pk,
-                        sku.lower(),
-                    ))
-
+                candidate_supplier_pk = self._to_int_from_string(
+                    candidate.get("_supplier_pk"), default=0
+                )
+                candidate_sku = (
+                    str(candidate.get("supplier_part_number") or "").strip().lower()
+                )
+                existing_pk = existing_by_supplier_sku.get((
+                    candidate_supplier_pk,
+                    candidate_sku,
+                ))
                 candidate["existing_supplier_part"] = existing_pk is not None
                 candidate["existing_supplier_part_pk"] = existing_pk
                 candidate["action"] = "update" if existing_pk is not None else "create"
@@ -2582,6 +2612,8 @@ class SupplierScout(
                     "semantic_hints": semantic_hints,
                     "numeric_constraints": numeric_constraints,
                     "query": query,
+                    "supplier_failures": supplier_failures,
+                    "supplier_attempts": supplier_attempts,
                 },
             })
         except Exception as e:

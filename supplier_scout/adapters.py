@@ -116,9 +116,13 @@ class SupplierAPIClient(APICallMixin):
 
     def api_call(self, url, *args, **kwargs):
         method = str(kwargs.get("method") or "GET").upper()
-        sanitized_url = self._sanitize_debug_url(url)
-        started_at = time.monotonic()
         debug_logging = self._debug_logging_enabled()
+
+        sanitized_url = str(url or "")
+        started_at = None
+        if debug_logging:
+            sanitized_url = self._sanitize_debug_url(url)
+            started_at = time.monotonic()
 
         if debug_logging:
             logger.debug(
@@ -140,7 +144,7 @@ class SupplierAPIClient(APICallMixin):
                     "Supplier API error method=%s url=%s duration_ms=%s error=%s",
                     method,
                     sanitized_url,
-                    round((time.monotonic() - started_at) * 1000, 2),
+                    round((time.monotonic() - (started_at or 0)) * 1000, 2),
                     f"{type(exc).__name__}: {exc}",
                 )
             raise
@@ -151,7 +155,7 @@ class SupplierAPIClient(APICallMixin):
                 method,
                 sanitized_url,
                 getattr(response, "status_code", None),
-                round((time.monotonic() - started_at) * 1000, 2),
+                round((time.monotonic() - (started_at or 0)) * 1000, 2),
             )
 
         return response

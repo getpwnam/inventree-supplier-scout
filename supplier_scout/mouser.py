@@ -96,6 +96,11 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
     max_candidates_setting = "MOUSER_MAX_CANDIDATES"
     api_rate_limit_per_second_default = 1
     api_daily_limit_default = 1000
+    search_api_key_setting = MOUSER_SEARCH_API_KEY_SETTING
+    min_price_quantity_setting = "MOUSER_MIN_PRICE_QUANTITY"
+    max_price_quantity_setting = "MOUSER_MAX_PRICE_QUANTITY"
+    cache_ttl_setting = "MOUSER_CACHE_TTL"
+    cache_dir_name = "inventree_mouser"
 
     COUNTRY_CODES = {
         "AUD": "AU",
@@ -128,16 +133,59 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
     def _get_search_api_key(self, user=None):
         if user is not None:
             user_key = self.plugin.get_user_setting(
-                MOUSER_SEARCH_API_KEY_SETTING, user=user, backup_value=None
+                self.search_api_key_setting, user=user, backup_value=None
             )
             if user_key not in (None, ""):
                 return str(user_key).strip()
-        global_key = self.get_setting(MOUSER_SEARCH_API_KEY_SETTING, backup_value="")
+        global_key = self.get_setting(self.search_api_key_setting, backup_value="")
         return str(global_key).strip()
+
+    def _get_locale_currency_code(self):
+        currency = str(
+            InvenTreeSetting.get_setting("INVENTREE_DEFAULT_CURRENCY") or "USD"
+        ).strip()
+        currency = currency.upper()
+        if len(currency) != 3 or not currency.isalpha():
+            return "USD"
+        return currency
+
+    def _get_inventree_language(self):
+        language = str(get_language() or "").strip()
+        if language == "":
+            language = "en-us"
+        return language
+
+    def _get_locale_language_code(self):
+        language = self._get_inventree_language().lower().replace("_", "-")
+
+        if language in ["zh-hans", "zh-cn", "zhs"]:
+            return "zhs"
+        if language in ["zh-hant", "zh-tw", "zht"]:
+            return "zht"
+
+        base = language.split("-")[0]
+        if len(base) == 2 and base.isalpha():
+            return base
+
+        return "en"
+
+    def _get_locale_country_code(self):
+        language = self._get_inventree_language().lower().replace("_", "-")
+        chunks = [chunk for chunk in language.split("-") if chunk]
+
+        if len(chunks) >= 2:
+            region = chunks[-1].upper()
+            if len(region) == 2 and region.isalpha():
+                if region == "UK":
+                    return "GB"
+                return region
+
+        currency = self._get_locale_currency_code()
+        return self.COUNTRY_CODES.get(currency, "US")
 
     def _get_cache_dir(self):
         """Return the cache directory path, creating it if necessary."""
-        cache_dir = Path.home() / ".cache" / "inventree_mouser"
+        cache_dir = Path.home() / ".cache" / self.cache_dir_name
         cache_dir.mkdir(parents=True, exist_ok=True)
         return cache_dir
 
@@ -150,7 +198,7 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
     def _get_cache_ttl_seconds(self):
         """Get cache TTL in seconds from settings."""
         try:
-            ttl = int(self.get_setting("MOUSER_CACHE_TTL") or 3600)
+            ttl = int(self.get_setting(self.cache_ttl_setting) or 3600)
             return max(0, ttl)  # Ensure non-negative
         except (ValueError, TypeError):
             return 3600
@@ -254,8 +302,8 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
 
     def _build_search_url(self, user=None):
         api_key = self._get_search_api_key(user=user)
-        currency = InvenTreeSetting.get_setting("INVENTREE_DEFAULT_CURRENCY")
-        country = self.COUNTRY_CODES.get(currency, "US")
+        currency = self._get_locale_currency_code()
+        country = self._get_locale_country_code()
         return (
             self.SEARCH_ENDPOINT
             + "?apiKey="
@@ -268,8 +316,8 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
 
     def _build_keyword_url(self, user=None):
         api_key = self._get_search_api_key(user=user)
-        currency = InvenTreeSetting.get_setting("INVENTREE_DEFAULT_CURRENCY")
-        country = self.COUNTRY_CODES.get(currency, "US")
+        currency = self._get_locale_currency_code()
+        country = self._get_locale_country_code()
         return (
             self.KEYWORD_ENDPOINT
             + "?apiKey="
@@ -306,7 +354,7 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         if min_qty is None:
             try:
                 min_qty_setting = (
-                    self.get_effective_setting("MOUSER_MIN_PRICE_QUANTITY", user=user)
+                    self.get_effective_setting(self.min_price_quantity_setting, user=user)
                     or 1
                 )
                 min_qty = int(min_qty_setting) if min_qty_setting else 1
@@ -316,7 +364,7 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         if max_qty is None:
             try:
                 max_qty_setting = (
-                    self.get_effective_setting("MOUSER_MAX_PRICE_QUANTITY", user=user)
+                    self.get_effective_setting(self.max_price_quantity_setting, user=user)
                     or ""
                 )
                 max_qty = int(max_qty_setting) if max_qty_setting else None

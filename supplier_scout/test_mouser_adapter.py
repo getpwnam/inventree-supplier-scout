@@ -137,6 +137,27 @@ class TestMouserSupplierAdapter(unittest.TestCase):
         self.assertIn("countryCode=DE", url)
         self.assertIn("currencyCode=EUR", url)
 
+    @patch("supplier_scout.mouser.get_language")
+    @patch("supplier_scout.mouser.InvenTreeSetting")
+    def test_build_keyword_url_prefers_language_region_for_country(
+        self, mock_setting, mock_get_language
+    ):
+        def setting_side_effect(key):
+            if key == "INVENTREE_DEFAULT_CURRENCY":
+                return "EUR"
+            return ""
+
+        mock_setting.get_setting.side_effect = setting_side_effect
+        mock_get_language.return_value = "en-us"
+        adapter = MouserSupplierAdapter(
+            DummyPlugin(settings={"MOUSER_APIKEY_SEARCH": "abc123"})
+        )
+
+        url = adapter._build_keyword_url()
+
+        self.assertIn("countryCode=US", url)
+        self.assertIn("currencyCode=EUR", url)
+
     def test_post_raises_when_daily_limit_reached(self):
         self.adapter.plugin.settings["MOUSER_API_RATE_LIMIT_PER_SECOND"] = 0
         self.adapter.plugin.settings["MOUSER_API_DAILY_LIMIT"] = 1

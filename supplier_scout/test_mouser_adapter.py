@@ -308,6 +308,59 @@ class TestMouserSupplierAdapter(unittest.TestCase):
 
         self.assertEqual(result, {"error_status": "OK", "parts": []})
 
+    def test_search_rejects_non_mapping_response_payload(self):
+        self.adapter._get_cached_response = MagicMock(return_value=["unexpected"])
+        self.adapter._post = MagicMock()
+
+        result = self.adapter._search_mouser_parts(
+            "https://example.invalid", {"query": "abc"}
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "error_status": "Invalid response payload from Mouser",
+                "parts": [],
+            },
+        )
+        self.adapter._post.assert_not_called()
+
+    def test_get_candidates_skips_non_mapping_part_entries(self):
+        self.adapter._search_mouser_parts = MagicMock(
+            side_effect=[
+                {
+                    "error_status": "OK",
+                    "parts": [
+                        {
+                            "MouserPartNumber": "SKU-1",
+                            "ManufacturerPartNumber": "MPN-1",
+                            "PriceBreaks": [
+                                "bad-price-break",
+                                {"Quantity": 1, "Price": "$1.00", "Currency": "USD"},
+                            ],
+                            "ProductAttributes": [
+                                "bad-attribute",
+                                {
+                                    "AttributeName": "Packaging",
+                                    "AttributeValue": "Reel",
+                                },
+                            ],
+                        },
+                        "bad-part",
+                    ],
+                },
+                {"error_status": "OK", "parts": []},
+            ]
+        )
+
+        result = self.adapter.get_candidates("abc", max_results=5)
+
+        self.assertEqual(result["error_status"], "OK")
+        self.assertEqual(len(result["candidates"]), 1)
+        self.assertEqual(result["candidates"][0]["supplier_part_number"], "SKU-1")
+        self.assertEqual(result["candidates"][0]["packaging"], "Reel")
+        self.assertEqual(len(result["candidates"][0]["price_breaks"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

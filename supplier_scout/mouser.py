@@ -345,6 +345,7 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
     def _build_candidate_from_part(
         self, part_data, min_qty=None, max_qty=None, user=None
     ):
+        part_data = self._coerce_mapping(part_data)
         price_breaks = []
         min_price = None
         filtered_price = None
@@ -371,7 +372,9 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
             except (ValueError, TypeError):
                 max_qty = None
 
-        for price_break in part_data.get("PriceBreaks", []) or []:
+        for price_break in self._coerce_list(part_data.get("PriceBreaks") or []):
+            if not isinstance(price_break, dict):
+                continue
             price_value = self.reformat_mouser_price(price_break.get("Price"))
             qty = price_break.get("Quantity") or 1
 
@@ -400,7 +403,9 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
             or 0
         )
 
-        for attribute in part_data.get("ProductAttributes") or []:
+        for attribute in self._coerce_list(part_data.get("ProductAttributes") or []):
+            if not isinstance(attribute, dict):
+                continue
             attr_name = str(attribute.get("AttributeName") or "").strip()
             attr_value = str(attribute.get("AttributeValue") or "").strip()
             if attr_name and attr_value:
@@ -458,10 +463,17 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
             # Cache the response for future requests
             self._cache_response(url, payload, response_data)
 
-        errors = response_data.get("Errors") or []
+        if not isinstance(response_data, dict):
+            return {
+                "error_status": _("Invalid response payload from Mouser"),
+                "parts": [],
+            }
+
+        errors = self._coerce_list(response_data.get("Errors") or [])
         if errors:
-            code = errors[0].get("Code")
-            message = errors[0].get("Message") or code or _("Mouser search error")
+            error = self._coerce_mapping(errors[0])
+            code = error.get("Code")
+            message = error.get("Message") or code or _("Mouser search error")
 
             if code in ["SearchNotFound", "NotFound"]:
                 return {"error_status": "OK", "parts": []}
@@ -477,7 +489,9 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
                 "parts": [],
             }
 
-        parts = (response_data.get("SearchResults") or {}).get("Parts") or []
+        parts = self._coerce_list(
+            self._coerce_mapping(response_data.get("SearchResults")).get("Parts") or []
+        )
 
         return {
             "error_status": "OK",
@@ -529,6 +543,8 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
                 continue
 
             for part_data in result.get("parts", []):
+                if not isinstance(part_data, dict):
+                    continue
                 supplier_part_number = str(
                     part_data.get("MouserPartNumber") or ""
                 ).strip()
@@ -560,7 +576,9 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
 
     def get_mouser_package(self, part_data):
         try:
-            attributes = part_data["ProductAttributes"]
+            attributes = self._coerce_list(
+                self._coerce_mapping(part_data).get("ProductAttributes")
+            )
         except Exception:
             return None
 
@@ -572,6 +590,8 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
         packaging_name_set = {label.casefold() for label in packaging_labels}
         matches = []
         for attribute in attributes:
+            if not isinstance(attribute, dict):
+                continue
             attribute_name = str(attribute.get("AttributeName") or "").strip()
             attribute_value = str(attribute.get("AttributeValue") or "").strip()
             if attribute_name.casefold() in packaging_name_set and attribute_value:

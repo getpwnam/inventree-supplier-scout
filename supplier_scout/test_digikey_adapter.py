@@ -197,6 +197,79 @@ class TestDigikeySupplierAdapter(unittest.TestCase):
         self.assertEqual(result.get("error_status"), "'Keywords' must not be empty.")
         self.assertEqual(result.get("products"), [])
 
+    def test_search_digikey_products_rejects_non_mapping_response_payload(self):
+        adapter = DigikeySupplierAdapter(
+            DummyPlugin(
+                settings={
+                    "DIGIKEY_CLIENT_ID": "global-client-id",
+                    "DIGIKEY_CLIENT_SECRET": "global-client-secret",
+                }
+            )
+        )
+        adapter._get_cached_response = MagicMock(return_value=["unexpected"])
+        adapter._post = MagicMock()
+
+        result = adapter._search_digikey_products(
+            adapter.KEYWORD_ENDPOINT,
+            {"Keywords": "STM32"},
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "error_status": "Invalid response payload from DigiKey",
+                "products": [],
+            },
+        )
+        adapter._post.assert_not_called()
+
+    def test_get_candidates_skips_non_mapping_products_and_nested_entries(self):
+        adapter = DigikeySupplierAdapter(
+            DummyPlugin(
+                settings={
+                    "DIGIKEY_CLIENT_ID": "global-client-id",
+                    "DIGIKEY_CLIENT_SECRET": "global-client-secret",
+                }
+            )
+        )
+        adapter._search_digikey_products = MagicMock(
+            return_value={
+                "error_status": "OK",
+                "products": [
+                    {
+                        "Description": "bad-description",
+                        "Manufacturer": "bad-manufacturer",
+                        "ProductVariations": [
+                            "bad-variation",
+                            {
+                                "DigiKeyProductNumber": "123-ABC-ND",
+                                "PackageType": "bad-package",
+                                "StandardPricing": [
+                                    "bad-price-break",
+                                    {"BreakQuantity": 1, "UnitPrice": 1.23},
+                                ],
+                                "QuantityAvailable": "12 In Stock",
+                            },
+                        ],
+                    },
+                    "bad-product",
+                ],
+            }
+        )
+
+        result = adapter.get_candidates("STM32", max_results=5)
+
+        self.assertEqual(result["error_status"], "OK")
+        self.assertEqual(len(result["candidates"]), 1)
+        self.assertEqual(
+            result["candidates"][0]["supplier_part_number"],
+            "123-ABC-ND",
+        )
+        self.assertEqual(result["candidates"][0]["description"], "")
+        self.assertEqual(result["candidates"][0]["packaging"], "")
+        self.assertEqual(result["candidates"][0]["available_quantity"], 12)
+        self.assertEqual(len(result["candidates"][0]["price_breaks"]), 1)
+
     @patch("supplier_scout.mouser.get_language")
     @patch("supplier_scout.mouser.InvenTreeSetting")
     def test_candidate_product_link_includes_site_language_currency(

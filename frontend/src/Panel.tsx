@@ -729,12 +729,16 @@ function SupplierScoutMatcher({
       const filteredNameTokens = dedupTokens([
         ...nameToks,
         ...fallbackNameTokens
-        [...nameVals, ...filteredNameTokens, ...catToks, ...paramToks, ...mfgToks].map(
+      ]).filter((token) => !nameValueKeys.has(normalizeTokenKey(token)));
 
       const otherGroupTokenKeys = new Set(
-        [...nameVals, ...nameToks, ...catToks, ...paramToks, ...mfgToks].map(
-          (t) => normalizeTokenKey(t)
-        )
+        [
+          ...nameVals,
+          ...filteredNameTokens,
+          ...catToks,
+          ...paramToks,
+          ...mfgToks
+        ].map((t) => normalizeTokenKey(t))
       );
       const uniqueSemanticToks = dedupTokens(semanticToks).filter(
         (t) => !otherGroupTokenKeys.has(normalizeTokenKey(t))

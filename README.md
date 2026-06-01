@@ -176,6 +176,16 @@ Settings are managed through the InvenTree plugin settings UI (**Settings → Pl
 | `DIGIKEY_MAX_PRICE_QUANTITY` | Global, User | Global: *(empty)* / User: `—` | Upper bound for price-break quantity selection. User scope overrides global when set. |
 | `DIGIKEY_CACHE_TTL` | Global | `3600` | How long (in seconds) to cache DigiKey API responses on disk. Set to `0` to disable caching. Cache files are stored in `~/.cache/inventree_digikey/`. |
 
+### DigiKey Scheduled Resync
+
+| Setting key | Scope | Default | Description |
+|---|---|---|---|
+| `DIGIKEY_RESYNC_ENABLED` | Global | `False` | Enable periodic background refresh of existing DigiKey supplier parts. |
+| `DIGIKEY_RESYNC_INTERVAL_MINUTES` | Global | `1440` | How often to run a DigiKey resync (in minutes). Default is once per day. |
+| `DIGIKEY_RESYNC_BATCH_SIZE` | Global | `100` | Maximum number of existing DigiKey supplier parts to refresh per scheduled run. Uses a round-robin cursor to spread work across runs. |
+| `DIGIKEY_API_RATE_LIMIT_PER_SECOND` | Global | `1` | Maximum DigiKey API requests per second. Set to `0` to disable rate limiting. |
+| `DIGIKEY_API_DAILY_LIMIT` | Global | `1000` | Maximum DigiKey API requests per day. Requests beyond this limit raise an error until midnight UTC. Set to `0` for no limit. |
+
 ### Mouser Electronics
 
 | Setting key | Scope | Default | Description |

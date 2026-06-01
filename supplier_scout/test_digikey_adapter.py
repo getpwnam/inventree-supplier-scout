@@ -3,6 +3,7 @@
 import sys
 import types
 import unittest
+from datetime import datetime
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -41,6 +42,7 @@ def _install_inventree_stubs():
 _install_inventree_stubs()
 
 from supplier_scout.digikey import DigikeySupplierAdapter  # noqa: E402
+from supplier_scout.adapters import SupplierAPIRateLimitError  # noqa: E402
 
 
 class DummyPlugin:
@@ -60,6 +62,9 @@ class DummyPlugin:
     def get_user_setting(self, key, user=None, backup_value=None):
         del user
         return self.user_settings.get(key, backup_value)
+
+    def set_setting(self, key, value):
+        self.settings[key] = value
 
 
 class TestDigikeySupplierAdapter(unittest.TestCase):
@@ -306,6 +311,77 @@ class TestDigikeySupplierAdapter(unittest.TestCase):
 
         self.assertIn("www.digikey.com.au", link)
         self.assertNotIn("?", link)
+
+    def test_digikey_api_rate_defaults(self):
+        adapter = DigikeySupplierAdapter(DummyPlugin())
+        self.assertEqual(adapter.get_api_rate_limit_per_second(), 1)
+        self.assertEqual(adapter.get_api_daily_limit(), 1000)
+
+    def test_daily_api_limit_blocks_when_exceeded(self):
+        adapter = DigikeySupplierAdapter(
+            DummyPlugin(settings={
+                "DIGIKEY_API_RATE_LIMIT_PER_SECOND": 0,
+                "DIGIKEY_API_DAILY_LIMIT": 2,
+            })
+        )
+
+        adapter.enforce_api_rate_limits(cost=1)
+        adapter.enforce_api_rate_limits(cost=1)
+
+        with self.assertRaises(SupplierAPIRateLimitError):
+            adapter.enforce_api_rate_limits(cost=1)
+
+    def test_post_raises_when_daily_limit_reached(self):
+        adapter = DigikeySupplierAdapter(
+            DummyPlugin(
+                settings={
+                    "DIGIKEY_CLIENT_ID": "global-client-id",
+                    "DIGIKEY_CLIENT_SECRET": "global-client-secret",
+                    "DIGIKEY_API_RATE_LIMIT_PER_SECOND": 0,
+                    "DIGIKEY_API_DAILY_LIMIT": 1,
+                    "DIGIKEY_API_DAILY_COUNT": 1,
+                    "DIGIKEY_API_DAILY_DATE": datetime.utcnow().date().isoformat(),
+                }
+            )
+        )
+        adapter.transport.api_call = MagicMock(return_value=MagicMock())
+
+        with self.assertRaises(SupplierAPIRateLimitError):
+            adapter._post("https://api.digikey.com/products/v4/search/keyword", {})
+
+        adapter.transport.api_call.assert_not_called()
+
+    def test_resync_enabled_defaults_to_false(self):
+        adapter = DigikeySupplierAdapter(DummyPlugin())
+        self.assertFalse(adapter.get_resync_enabled())
+
+    def test_resync_enabled_reads_setting(self):
+        adapter = DigikeySupplierAdapter(
+            DummyPlugin(settings={"DIGIKEY_RESYNC_ENABLED": True})
+        )
+        self.assertTrue(adapter.get_resync_enabled())
+
+    def test_resync_interval_defaults_to_1440(self):
+        adapter = DigikeySupplierAdapter(DummyPlugin())
+        self.assertEqual(adapter.get_resync_interval_minutes(), 1440)
+
+    def test_resync_batch_size_defaults_to_100(self):
+        adapter = DigikeySupplierAdapter(DummyPlugin())
+        self.assertEqual(adapter.get_resync_batch_size(), 100)
+
+    def test_resync_setting_keys_are_digikey_prefixed(self):
+        self.assertEqual(
+            DigikeySupplierAdapter.get_resync_enabled_setting_key(),
+            "DIGIKEY_RESYNC_ENABLED",
+        )
+        self.assertEqual(
+            DigikeySupplierAdapter.get_resync_interval_setting_key(),
+            "DIGIKEY_RESYNC_INTERVAL_MINUTES",
+        )
+        self.assertEqual(
+            DigikeySupplierAdapter.get_resync_batch_size_setting_key(),
+            "DIGIKEY_RESYNC_BATCH_SIZE",
+        )
 
 
 if __name__ == "__main__":

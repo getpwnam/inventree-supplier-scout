@@ -327,6 +327,7 @@ class TestMouserSupplierAdapter(unittest.TestCase):
 
         self.assertEqual(result["error_status"], "OK")
         self.assertEqual(len(result["parts"]), 1)
+        self.assertTrue(result["from_cache"])
         self.adapter._post.assert_not_called()
 
     def test_search_handles_not_found_error_as_empty_ok(self):
@@ -370,6 +371,7 @@ class TestMouserSupplierAdapter(unittest.TestCase):
             side_effect=[
                 {
                     "error_status": "OK",
+                    "from_cache": True,
                     "parts": [
                         {
                             "MouserPartNumber": "SKU-1",
@@ -400,6 +402,7 @@ class TestMouserSupplierAdapter(unittest.TestCase):
         self.assertEqual(result["candidates"][0]["supplier_part_number"], "SKU-1")
         self.assertEqual(result["candidates"][0]["packaging"], "Reel")
         self.assertEqual(len(result["candidates"][0]["price_breaks"]), 1)
+        self.assertTrue(result["candidates"][0]["_from_cache"])
 
 
 if __name__ == "__main__":

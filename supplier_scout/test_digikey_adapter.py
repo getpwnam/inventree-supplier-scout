@@ -307,6 +307,7 @@ class TestDigikeySupplierAdapter(unittest.TestCase):
         adapter._search_digikey_products = MagicMock(
             return_value={
                 "error_status": "OK",
+                "from_cache": True,
                 "products": [
                     {
                         "Description": "bad-description",
@@ -341,6 +342,7 @@ class TestDigikeySupplierAdapter(unittest.TestCase):
         self.assertEqual(result["candidates"][0]["packaging"], "")
         self.assertEqual(result["candidates"][0]["available_quantity"], 12)
         self.assertEqual(len(result["candidates"][0]["price_breaks"]), 1)
+        self.assertTrue(result["candidates"][0]["_from_cache"])
 
     @patch("supplier_scout.mouser.get_language")
     @patch("supplier_scout.mouser.InvenTreeSetting")

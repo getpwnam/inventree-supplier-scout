@@ -17,7 +17,7 @@
 
 | Supplier | Search | Scheduled Resync | Notes |
 |---|---|---|---|
-| **DigiKey** | ✅ | ✅ | Uses DigiKey OAuth2 client credentials (`client_id` + `client_secret`) for authenticated API access |
+| **DigiKey** | ✅ | ✅ | Uses DigiKey OAuth2 client credentials (`client_id` + `client_secret`) for authenticated API access; response caching |
 | **Mouser Electronics** | ✅ | ✅ | Part-number and keyword search; response caching; per-user API keys |
 
 Additional suppliers can be added by implementing a `BaseSupplierAdapter` subclass.

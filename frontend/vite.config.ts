@@ -52,12 +52,12 @@ export default defineConfig({
         './src/Dashboard.tsx',
         './src/Settings.tsx',
       ],
-        output: {
-          dir: '../supplier_scout/static',
-          entryFileNames: '[name].js',
-          assetFileNames: 'assets/[name].[ext]',
-          globals: externalLibs,
-        },
+      output: {
+        dir: '../supplier_scout/static',
+        entryFileNames: '[name].js',
+        assetFileNames: 'assets/[name].[ext]',
+        globals: externalLibs,
+      },
       external: externalKeys,
     }
   },

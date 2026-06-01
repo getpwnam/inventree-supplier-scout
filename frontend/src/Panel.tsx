@@ -3,6 +3,7 @@ import {
   type InvenTreePluginContext
 } from '@inventreedb/ui';
 import {
+  ActionIcon,
   Alert,
   Anchor,
   Badge,
@@ -27,7 +28,7 @@ import {
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { LocalizedComponent } from './locale';
 
 type Supplier = {
@@ -279,6 +280,8 @@ function SupplierScoutMatcher({
   onClose?: () => void;
   modalId?: string;
 }) {
+  const apiUsageSectionId = useId();
+  const searchQuerySectionId = useId();
   const suppliers = serverContext.suppliers || [];
   const [queryTags, setQueryTags] = useState<string[]>(() =>
     dedupTokens(
@@ -1203,7 +1206,11 @@ function SupplierScoutMatcher({
 
       <Paper withBorder p='xs' radius='md'>
         <UnstyledButton
+          type='button'
           onClick={() => setShowApiUsage(!showApiUsage)}
+          aria-controls={apiUsageSectionId}
+          aria-expanded={showApiUsage}
+          aria-label={`${showApiUsage ? 'Hide' : 'Show'} API usage details`}
           style={{ width: '100%' }}
         >
           <Group justify='space-between' align='center'>
@@ -1222,7 +1229,7 @@ function SupplierScoutMatcher({
             )}
           </Group>
         </UnstyledButton>
-        <Collapse expanded={showApiUsage}>
+        <Collapse id={apiUsageSectionId} expanded={showApiUsage}>
           <Stack gap='xs' mt='xs'>
             {renderRateBadge()}
             <Group justify='flex-end'>
@@ -1241,7 +1248,11 @@ function SupplierScoutMatcher({
 
       <Paper withBorder p='xs' radius='md'>
         <UnstyledButton
+          type='button'
           onClick={() => setShowTokens(!showTokens)}
+          aria-controls={searchQuerySectionId}
+          aria-expanded={showTokens}
+          aria-label={`${showTokens ? 'Hide' : 'Show'} search query details`}
           style={{ width: '100%' }}
         >
           <Group gap='xs'>
@@ -1253,7 +1264,7 @@ function SupplierScoutMatcher({
             </Text>
           </Group>
         </UnstyledButton>
-        <Collapse expanded={showTokens}>
+        <Collapse id={searchQuerySectionId} expanded={showTokens}>
           <Stack gap='sm' mt='xs'>
             {loadingTokens && (
               <Group gap='xs'>
@@ -1400,9 +1411,14 @@ function SupplierScoutMatcher({
             w={300}
             label='Optional quantity overrides for supplier price-break selection. Leave blank to use plugin defaults shown in each field.'
           >
-            <Badge size='xs' variant='outline' color='gray'>
+            <ActionIcon
+              size='sm'
+              variant='subtle'
+              color='gray'
+              aria-label='Explain search quantity overrides'
+            >
               ?
-            </Badge>
+            </ActionIcon>
           </Tooltip>
         </Group>
         <TextInput
@@ -1562,6 +1578,7 @@ function SupplierScoutMatcher({
                         <Table.Td>
                           <Checkbox
                             checked={selected}
+                            aria-label={`Select candidate ${candidate.supplier_part_number || candidate.manufacturer_part_number || candidate.description || 'result'}`}
                             onChange={(event) =>
                               toggleSelection(
                                 candidate,

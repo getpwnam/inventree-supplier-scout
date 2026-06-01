@@ -1,6 +1,9 @@
-import type { InvenTreePluginContext } from '@inventreedb/ui';
-import { Alert, Button, Text } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
+import {
+  checkPluginVersion,
+  type InvenTreePluginContext
+} from '@inventreedb/ui';
+import { Alert, List, Stack, Text } from '@mantine/core';
+import { LocalizedComponent } from './locale';
 
 function PluginSettingsDisplay({
   context: _context
@@ -8,26 +11,35 @@ function PluginSettingsDisplay({
   context: InvenTreePluginContext;
 }) {
   return (
-    <Alert color='blue' title='Hello World'>
-      <Text>This is a custom settings page for the SupplierScout plugin!</Text>
-      <Text>Custom UI elements can be rendered here</Text>
-      <Button
-        color='blue'
-        onClick={() => {
-          notifications.show({
-            title: 'Hello World',
-            message:
-              'This is a custom notification from the SupplierScout plugin!',
-            color: 'blue'
-          });
-        }}
-      >
-        Click Me!
-      </Button>
+    <Alert color='blue' title='Supplier Scout'>
+      <Stack gap='xs'>
+        <Text size='sm'>
+          Configure supplier credentials and query defaults from the plugin
+          settings below, then use Supplier Scout from each part record to find
+          supplier matches.
+        </Text>
+        <List size='sm' spacing='xs'>
+          <List.Item>
+            Add API credentials for each enabled supplier integration.
+          </List.Item>
+          <List.Item>
+            Review default quantity overrides to control price-break lookups.
+          </List.Item>
+          <List.Item>
+            Use the dashboard widget to monitor API usage and cache health.
+          </List.Item>
+        </List>
+      </Stack>
     </Alert>
   );
 }
 
 export function renderPluginSettings(context: InvenTreePluginContext) {
-  return <PluginSettingsDisplay context={context} />;
+  checkPluginVersion(context);
+
+  return (
+    <LocalizedComponent locale={context.locale}>
+      <PluginSettingsDisplay context={context} />
+    </LocalizedComponent>
+  );
 }

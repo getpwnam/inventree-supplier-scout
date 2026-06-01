@@ -202,6 +202,73 @@ class TestDigikeySupplierAdapter(unittest.TestCase):
         self.assertEqual(result.get("error_status"), "'Keywords' must not be empty.")
         self.assertEqual(result.get("products"), [])
 
+    def test_search_digikey_products_uses_cache_without_transport_call(self):
+        adapter = DigikeySupplierAdapter(
+            DummyPlugin(
+                settings={
+                    "DIGIKEY_CLIENT_ID": "global-client-id",
+                    "DIGIKEY_CLIENT_SECRET": "global-client-secret",
+                }
+            )
+        )
+        response_payload = {
+            "Products": [
+                {
+                    "DigiKeyPartNumber": "123-ABC-ND",
+                }
+            ]
+        }
+        adapter._get_cached_response = MagicMock(return_value=response_payload)
+        adapter._post = MagicMock()
+        adapter._cache_response = MagicMock()
+
+        result = adapter._search_digikey_products(
+            adapter.KEYWORD_ENDPOINT,
+            {"Keywords": "STM32"},
+        )
+
+        self.assertEqual(result["error_status"], "OK")
+        self.assertEqual(len(result["products"]), 1)
+        adapter._post.assert_not_called()
+        adapter._cache_response.assert_not_called()
+
+    def test_search_digikey_products_caches_response_on_cache_miss(self):
+        adapter = DigikeySupplierAdapter(
+            DummyPlugin(
+                settings={
+                    "DIGIKEY_CLIENT_ID": "global-client-id",
+                    "DIGIKEY_CLIENT_SECRET": "global-client-secret",
+                }
+            )
+        )
+        payload = {"Keywords": "STM32"}
+        response_payload = {
+            "Products": [
+                {
+                    "DigiKeyPartNumber": "123-ABC-ND",
+                }
+            ]
+        }
+        response = MagicMock()
+        response.json.return_value = response_payload
+
+        adapter._get_cached_response = MagicMock(return_value=None)
+        adapter._post = MagicMock(return_value=response)
+        adapter._cache_response = MagicMock()
+
+        result = adapter._search_digikey_products(
+            adapter.KEYWORD_ENDPOINT,
+            payload,
+        )
+
+        self.assertEqual(result["error_status"], "OK")
+        self.assertEqual(len(result["products"]), 1)
+        adapter._cache_response.assert_called_once_with(
+            adapter.KEYWORD_ENDPOINT,
+            payload,
+            response_payload,
+        )
+
     def test_search_digikey_products_rejects_non_mapping_response_payload(self):
         adapter = DigikeySupplierAdapter(
             DummyPlugin(

@@ -1,7 +1,5 @@
 """DigiKey supplier adapter."""
 
-import json
-import logging
 import time
 
 try:
@@ -15,9 +13,6 @@ except Exception:  # pragma: no cover - fallback for isolated unit tests
 from .adapters import SupplierAPIClient
 from .adapters import SupplierAPIRateLimitError
 from .mouser import MouserSupplierAdapter
-
-
-logger = logging.getLogger("supplier_scout.digikey")
 
 
 DIGIKEY_CLIENT_ID_SETTING = "DIGIKEY_CLIENT_ID"
@@ -208,15 +203,6 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
         headers["X-DIGIKEY-Locale-Currency"] = self._get_locale_currency_code()
         headers["X-DIGIKEY-Locale-Site"] = self._get_digikey_site_code()
 
-        logger.debug(
-            "DigiKey API request %s locale(language=%s, currency=%s, site=%s) payload=%s",
-            url,
-            headers.get("X-DIGIKEY-Locale-Language", ""),
-            headers.get("X-DIGIKEY-Locale-Currency", ""),
-            headers.get("X-DIGIKEY-Locale-Site", ""),
-            json.dumps(payload, ensure_ascii=True),
-        )
-
         response = self.transport.api_call(
             url,
             method="POST",
@@ -226,24 +212,6 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
             endpoint_is_url=True,
             timeout=15,
         )
-
-        try:
-            status_code = int(getattr(response, "status_code", 0) or 0)
-        except Exception:
-            status_code = 0
-
-        if status_code >= 400:
-            try:
-                response_payload = response.json()
-            except Exception:
-                response_payload = str(getattr(response, "text", "") or "")
-
-            logger.debug(
-                "DigiKey API error response %s for %s: %s",
-                status_code,
-                url,
-                response_payload,
-            )
 
         return response
 

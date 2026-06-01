@@ -1038,9 +1038,7 @@ function SupplierScoutMatcher({
         setStatusMessage(data.message || 'No supplier matches returned');
       } else {
         setIsError(false);
-        setStatusMessage(
-          `Found ${foundCandidates.length} candidate(s) for query: ${data.query}`
-        );
+        setStatusMessage('');
       }
     } catch (error: any) {
       setIsError(true);
@@ -1141,7 +1139,7 @@ function SupplierScoutMatcher({
 
       const summary = `Applied candidates: created=${totalCreated}, updated=${totalUpdated}, errors=${totalErrors}`;
       setIsError(totalErrors > 0);
-      setStatusMessage(summary);
+      setStatusMessage('');
 
       notifications.show({
         title: 'Supplier Scout',
@@ -1193,9 +1191,7 @@ function SupplierScoutMatcher({
         supplier parts.
       </Text>
 
-      {statusMessage && (
-        <Alert color={isError ? 'red' : 'green'}>{statusMessage}</Alert>
-      )}
+      {isError && statusMessage && <Alert color='red'>{statusMessage}</Alert>}
 
       <NativeSelect
         label='Supplier'

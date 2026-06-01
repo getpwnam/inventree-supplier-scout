@@ -210,4 +210,13 @@ Settings are managed through the InvenTree plugin settings UI (**Settings → Pl
 
 ## Testing and Coverage
 
-See [TESTING.md](TESTING.md) for test commands, local CI-equivalent checks, and coverage details.
+See [development/TESTING.md](development/TESTING.md) for test commands, local CI-equivalent checks, and coverage details.
+
+## Development Docs
+
+Developer-focused documentation and helper scripts live under [development/](development/):
+
+- [development/README.md](development/README.md) - workflow, sourcemaps, branch-switch guidance.
+- [development/TESTING.md](development/TESTING.md) - backend/frontend checks and coverage.
+- [development/frontend.md](development/frontend.md) - frontend-specific setup and build notes.
+- [development/TODO.md](development/TODO.md) - engineering backlog and design notes.

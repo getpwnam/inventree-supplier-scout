@@ -7,6 +7,9 @@ on:
   release:
     types: [published]
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
 
   publish:
@@ -15,22 +18,22 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Setup Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
           python-version: 3.11
       - name: Install Python Dependencies
         run: |
           pip install --upgrade wheel setuptools twine build
       - name: Install Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
       - name: Build Frontend
         run: |
           cd frontend
-          npm install
+          npm ci
           npm run translate
           npm run build
       - name: Build Binary

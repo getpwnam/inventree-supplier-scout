@@ -58,7 +58,7 @@ cd /home/inventree
 invoke dev.test -r supplier_scout
 cd /home/inventree-supplier-scout
 coverage run -m unittest discover -s supplier_scout -p "test_*.py"
-coverage report -m --fail-under=45
+coverage report -m --fail-under=50
 coverage xml
 python3 -m build
 ```
@@ -67,7 +67,7 @@ Run the frontend CI checks locally:
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run translate
 npm run build
 npm run lint

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+OLD_REF="${1:-}"
+NEW_REF="${2:-}"
+IS_BRANCH_CHECKOUT="${3:-0}"
+
+# Ignore file checkouts that are not branch switches.
+if [[ "${IS_BRANCH_CHECKOUT}" != "1" ]]; then
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+if [[ -z "${OLD_REF}" || -z "${NEW_REF}" ]]; then
+  exit 0
+fi
+
+if git -C "${REPO_ROOT}" diff --name-only "${OLD_REF}" "${NEW_REF}" | grep -qE '^(frontend/|supplier_scout/static/)'; then
+  echo "Frontend/static changes detected on checkout. Refreshing plugin static assets..."
+  "${REPO_ROOT}/development/scripts/refresh-branch-static.sh"
+fi

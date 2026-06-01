@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+if git -C "${REPO_ROOT}" diff --name-only HEAD@{1} HEAD 2>/dev/null | grep -qE '^(frontend/|supplier_scout/static/)'; then
+  echo "Frontend/static changes detected after merge. Refreshing plugin static assets..."
+  "${REPO_ROOT}/development/scripts/refresh-branch-static.sh"
+fi

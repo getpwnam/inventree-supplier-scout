@@ -169,15 +169,11 @@ Settings are managed through the InvenTree plugin settings UI (**Settings → Pl
 | Setting key | Scope | Default | Description |
 |---|---|---|---|
 | `DIGIKEY_PK` | Global | — | Primary key of the DigiKey supplier company record in InvenTree. Must be set before search works. |
-| `DIGIKEY_CLIENT_ID` | Global | — | Global DigiKey OAuth2 client ID. |
-| `DIGIKEY_CLIENT_ID` | User | — | Per-user DigiKey OAuth2 client ID override. |
-| `DIGIKEY_CLIENT_SECRET` | Global | — | Global DigiKey OAuth2 client secret. Stored encrypted. |
-| `DIGIKEY_CLIENT_SECRET` | User | — | Per-user DigiKey OAuth2 client secret override. Stored encrypted. |
+| `DIGIKEY_CLIENT_ID` | Global, User | Global: `—` / User: `—` | DigiKey OAuth2 client ID. User scope overrides global when set. |
+| `DIGIKEY_CLIENT_SECRET` | Global, User | Global: `—` / User: `—` | DigiKey OAuth2 client secret (stored encrypted). User scope overrides global when set. |
 | `DIGIKEY_MAX_CANDIDATES` | Global | `40` | Maximum number of raw DigiKey results fetched before ranking. |
-| `DIGIKEY_MIN_PRICE_QUANTITY` | Global | `1` | Minimum quantity used when selecting the best price break. |
-| `DIGIKEY_MIN_PRICE_QUANTITY` | User | — | User override for the minimum price quantity. |
-| `DIGIKEY_MAX_PRICE_QUANTITY` | Global | *(empty)* | Upper bound for price-break quantity selection. |
-| `DIGIKEY_MAX_PRICE_QUANTITY` | User | — | User override for the maximum price quantity. |
+| `DIGIKEY_MIN_PRICE_QUANTITY` | Global, User | Global: `1` / User: `—` | Minimum quantity used when selecting the best price break. User scope overrides global when set. |
+| `DIGIKEY_MAX_PRICE_QUANTITY` | Global, User | Global: *(empty)* / User: `—` | Upper bound for price-break quantity selection. User scope overrides global when set. |
 | `DIGIKEY_CACHE_TTL` | Global | `3600` | How long (in seconds) to cache DigiKey API responses on disk. Set to `0` to disable caching. Cache files are stored in `~/.cache/inventree_digikey/`. |
 
 ### Mouser Electronics
@@ -185,13 +181,10 @@ Settings are managed through the InvenTree plugin settings UI (**Settings → Pl
 | Setting key | Scope | Default | Description |
 |---|---|---|---|
 | `MOUSER_PK` | Global | — | Primary key of the Mouser supplier company record in InvenTree. Must be set before search works. |
-| `MOUSER_APIKEY_SEARCH` | Global | — | Global Mouser Part Search API key. Obtain from the [Mouser API Hub](https://www.mouser.com/api-hub/). |
-| `MOUSER_APIKEY_SEARCH` | User | — | Per-user Mouser API key. Overrides the global key for that user's searches. Stored encrypted. |
+| `MOUSER_APIKEY_SEARCH` | Global, User | Global: `—` / User: `—` | Mouser Part Search API key (stored encrypted). Obtain from the [Mouser API Hub](https://www.mouser.com/api-hub/). User scope overrides global when set. |
 | `MOUSER_MAX_CANDIDATES` | Global | `40` | Maximum number of raw Mouser results fetched before ranking. Higher values improve match quality at the cost of more API calls. |
-| `MOUSER_MIN_PRICE_QUANTITY` | Global | `1` | Minimum quantity used when selecting the best price break (e.g., `1` for single-unit prices, `10` for tape-and-reel). |
-| `MOUSER_MIN_PRICE_QUANTITY` | User | — | User override for the minimum price quantity. |
-| `MOUSER_MAX_PRICE_QUANTITY` | Global | *(empty)* | Upper bound for price-break quantity selection. Leave empty to use the smallest available price break above the minimum. |
-| `MOUSER_MAX_PRICE_QUANTITY` | User | — | User override for the maximum price quantity. |
+| `MOUSER_MIN_PRICE_QUANTITY` | Global, User | Global: `1` / User: `—` | Minimum quantity used when selecting the best price break (e.g., `1` for single-unit prices, `10` for tape-and-reel). User scope overrides global when set. |
+| `MOUSER_MAX_PRICE_QUANTITY` | Global, User | Global: *(empty)* / User: `—` | Upper bound for price-break quantity selection. Leave empty to use the smallest available price break above the minimum. User scope overrides global when set. |
 | `MOUSER_CACHE_TTL` | Global | `3600` | How long (in seconds) to cache Mouser API responses on disk. Set to `0` to disable caching. Cache files are stored in `~/.cache/inventree_mouser/`. |
 
 ### Mouser Scheduled Resync
@@ -214,8 +207,7 @@ Settings are managed through the InvenTree plugin settings UI (**Settings → Pl
 
 | Setting key | Scope | Default | Description |
 |---|---|---|---|
-| `RANKING_STRATEGY` | Global | `balanced` | Default candidate ranking strategy. `balanced` weights match similarity (45 %), availability (35 %), and price (20 %). `availability` prioritises stock (50 %). `price` prioritises cost (50 %). |
-| `RANKING_STRATEGY` | User | *(empty)* | Per-user ranking strategy override. Leave empty to inherit the global value. |
+| `RANKING_STRATEGY` | Global, User | Global: `balanced` / User: *(empty)* | Candidate ranking strategy. `balanced` weights match similarity (45 %), availability (35 %), and price (20 %). `availability` prioritises stock (50 %). `price` prioritises cost (50 %). User scope overrides global when set. |
 | `TOP_N_CANDIDATES` | User | *(empty)* | Number of ranked candidates displayed in the search panel. Leave empty to use the default of `10`. |
 
 ### Token Generation
@@ -224,8 +216,7 @@ Settings are managed through the InvenTree plugin settings UI (**Settings → Pl
 |---|---|---|---|
 | `TOKEN_PARAMETER_NAMES` | Global | *(empty)* | Comma- or newline-separated list of parameter template names to include in token extraction. Leave empty to use **all** parameters. Example: `Capacitance, Voltage Rating, Package`. |
 | `TOKEN_INCLUDE_CATEGORY_NAMES` | Global | `True` | When enabled, the part's direct category name and every ancestor category name are added as token sources. Disable if category names interfere with search results. |
-| `TOKEN_NAME_MODE` | Global | `fallback` | Controls when the part name and description are included as search tokens. `fallback` — only when no structured tokens (MPN, IPN, parameters, categories) are available. `always` — always append name tokens. `never` — never include name tokens. |
-| `TOKEN_NAME_MODE` | User | *(empty)* | Per-user override for the name token strategy. Leave empty to inherit the global value. |
+| `TOKEN_NAME_MODE` | Global, User | Global: `fallback` / User: *(empty)* | Controls when the part name and description are included as search tokens. `fallback` — only when no structured tokens (MPN, IPN, parameters, categories) are available. `always` — always append name tokens. `never` — never include name tokens. User scope overrides global when set. |
 
 ## Testing and Coverage
 

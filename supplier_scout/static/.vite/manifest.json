@@ -4,7 +4,7 @@
     "name": "StoredTableState"
   },
   "src/Dashboard.tsx": {
-    "file": "Dashboard-BhOimq1y.js",
+    "file": "Dashboard.js",
     "name": "Dashboard",
     "src": "src/Dashboard.tsx",
     "isEntry": true,
@@ -13,7 +13,7 @@
     ]
   },
   "src/Panel.tsx": {
-    "file": "Panel-BfqWzLZk.js",
+    "file": "Panel.js",
     "name": "Panel",
     "src": "src/Panel.tsx",
     "isEntry": true,
@@ -34,7 +34,7 @@
     ]
   },
   "src/Settings.tsx": {
-    "file": "Settings-LCOVBM_Z.js",
+    "file": "Settings.js",
     "name": "Settings",
     "src": "src/Settings.tsx",
     "isEntry": true

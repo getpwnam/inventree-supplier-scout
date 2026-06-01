@@ -1,1 +1,3 @@
 recursive-include supplier_scout/static *
+recursive-exclude supplier_scout/static *.map
+exclude supplier_scout/test_*.py

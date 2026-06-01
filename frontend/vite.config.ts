@@ -44,7 +44,7 @@ export default defineConfig({
     target: 'esnext',
     cssCodeSplit: false,
     manifest: true,
-    sourcemap: true,
+    sourcemap: false,
     rollupOptions: {
       preserveEntrySignatures: "exports-only",
       input: [
@@ -52,23 +52,12 @@ export default defineConfig({
         './src/Dashboard.tsx',
         './src/Settings.tsx',
       ],
-      output: [
-        // Generate two sets of output files:
-        // One without hashes - for backwards compatibility
-        {
-          dir: '../supplier_scout/static',
-          entryFileNames: '[name].js',
-          assetFileNames: 'assets/[name].[ext]',
-          globals: externalLibs,
-        },
-        // And one with hashes for cache busting
-        {
-          dir: '../supplier_scout/static',
-          entryFileNames: '[name]-[hash].js',
-          assetFileNames: 'assets/[name].[ext]',
-          globals: externalLibs,
-        }
-      ],
+      output: {
+        dir: '../supplier_scout/static',
+        entryFileNames: '[name].js',
+        assetFileNames: 'assets/[name].[ext]',
+        globals: externalLibs,
+      },
       external: externalKeys,
     }
   },

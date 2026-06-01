@@ -84,14 +84,322 @@ A **Supplier Scout Metrics** card appears on the InvenTree dashboard (if at leas
 
 The plugin exposes several JSON endpoints under the plugin base URL (`/plugin/supplierscout/`):
 
-| Endpoint | Method | Description |
-|---|---|---|
-| `searchcandidates` | POST | Search for supplier candidates for a part |
-| `applycandidates` | POST | Apply selected candidates to a part |
-| `runresync` | POST | Trigger a manual supplier resync |
-| `ratelimitstatus` | GET/POST | Query current API rate-limit status |
-| `dashboardmetrics` | GET | Retrieve dashboard diagnostics |
-| `tokendebug` | GET/POST | Inspect token extraction and query plan for a part |
+| Endpoint | Method | Permission | Description |
+|---|---|---|---|
+| `searchcandidates` | POST | Part write | Search one or all configured suppliers for ranked candidate matches |
+| `applycandidates` | POST | Part write | Create or update supplier parts and refresh part pricing |
+| `runresync` | POST | Part write or Admin | Run or queue a manual supplier resync |
+| `clearcache` | POST | Admin | Clear response caches for one supplier or all suppliers |
+| `ratelimitstatus` | GET or POST | Part write | Return current API usage and daily quota status |
+| `dashboardmetrics` | GET | None | Return dashboard diagnostics for registered suppliers |
+| `tokendebug` | GET or POST | Part write | Inspect token extraction and query planning for a part |
+
+Notes:
+
+- Every endpoint also accepts a `.json` suffix, for example `/plugin/supplierscout/runresync.json`.
+- Browser requests must still satisfy the normal InvenTree session and CSRF requirements.
+- `Part write` means the user must have add, change, or delete permission for parts.
+- `Admin` means InvenTree staff or superuser access.
+
+### Endpoint Details
+
+#### `POST /plugin/supplierscout/searchcandidates`
+
+Search supplier APIs for a part and return ranked candidates.
+
+Request body:
+
+```json
+{
+   "pk": 123,
+   "supplier": 7,
+   "query": "10k 0603 resistor",
+   "top_n": 10,
+   "min_qty": 1,
+   "max_qty": 100
+}
+```
+
+Request fields:
+
+- `pk` required: InvenTree part primary key.
+- `supplier` optional: supplier company primary key. Omit it, set it to `""`, `0`, `"all"`, or `"*"` to search all configured suppliers.
+- `query` optional: explicit search string. If omitted or empty, Supplier Scout builds a query from part metadata.
+- `top_n` optional: maximum ranked results returned after scoring. Defaults to the user setting or `10`.
+- `min_qty` optional: lower quantity bound used when selecting price breaks.
+- `max_qty` optional: preferred upper quantity bound used when selecting price breaks.
+
+Response highlights:
+
+- `message`, `query`, `count`, and `candidates`.
+- Each candidate includes supplier metadata, rank score, and whether it already matches an existing supplier part.
+- `debug` includes token sources, semantic hints, numeric constraints, supplier attempts, and supplier failures.
+
+Example success response:
+
+```json
+{
+   "message": "OK",
+   "query": "10k 0603 resistor",
+   "count": 2,
+   "candidates": [
+      {
+         "supplier_part_number": "RC0603FR-0710KL",
+         "manufacturer_part_number": "RC0603FR-0710KL",
+         "_supplier_pk": 7,
+         "_supplier_key": "mouser",
+         "_supplier_name": "Mouser",
+         "existing_supplier_part": true,
+         "existing_supplier_part_pk": 456,
+         "action": "update"
+      }
+   ],
+   "debug": {
+      "supplier_failures": [],
+      "supplier_attempts": []
+   }
+}
+```
+
+#### `POST /plugin/supplierscout/applycandidates`
+
+Create or update supplier parts from candidate payloads returned by `searchcandidates`.
+
+Request body:
+
+```json
+{
+   "pk": 123,
+   "supplier": 7,
+   "candidates": [
+      {
+         "supplier_part_number": "RC0603FR-0710KL",
+         "manufacturer_part_number": "RC0603FR-0710KL",
+         "description": "10 kOhm Thick Film Resistor 0603",
+         "price_breaks": [
+            { "quantity": 1, "price": 0.02 },
+            { "quantity": 100, "price": 0.01 }
+         ]
+      }
+   ]
+}
+```
+
+Response highlights:
+
+- `created`, `updated`, `errors`, and per-candidate `results`.
+- Part pricing is refreshed automatically when any candidate import succeeds.
+
+Example success response:
+
+```json
+{
+   "message": "OK",
+   "created": 0,
+   "updated": 1,
+   "errors": 0,
+   "results": [
+      {
+         "status": "updated",
+         "supplier_part_pk": 456
+      }
+   ]
+}
+```
+
+#### `POST /plugin/supplierscout/runresync`
+
+Trigger a manual resync of existing supplier parts.
+
+Request body:
+
+```json
+{
+   "supplier": 7,
+   "part_pk": 123,
+   "async": true
+}
+```
+
+Request fields:
+
+- `supplier` required: supplier company primary key.
+- `part_pk` optional: when present, resync only supplier parts attached to this InvenTree part.
+- `async` optional: truthy values `1`, `true`, `yes`, `on`, or `y` queue the work through the InvenTree background task worker.
+- `action` optional: set to `reset_cursor` to reset the round-robin cursor for scheduled supplier-wide resync.
+
+Permission rules:
+
+- Any user with part write permission may resync a single part by passing `part_pk`.
+- Supplier-wide resync without `part_pk` requires admin access.
+- `action = reset_cursor` requires admin access.
+
+Synchronous response example:
+
+```json
+{
+   "message": "OK",
+   "scope": "supplier",
+   "action": "resync",
+   "supplier_pk": 7,
+   "processed": 5,
+   "updated": 5,
+   "created": 0,
+   "failed": 0,
+   "skipped": 0,
+   "cursor_before": 120,
+   "cursor_after": 125
+}
+```
+
+Asynchronous response example:
+
+```json
+{
+   "message": "Queued",
+   "queued": true,
+   "scope": "supplier",
+   "action": "resync",
+   "supplier_pk": 7,
+   "task_id": "b526758b2baf433eb71ac6994918065f",
+   "task_url": "/api/background-task/b526758b2baf433eb71ac6994918065f/"
+}
+```
+
+Cursor reset response example:
+
+```json
+{
+   "message": "OK",
+   "scope": "supplier",
+   "action": "reset_cursor",
+   "supplier_pk": 7,
+   "cursor_before": 125,
+   "cursor_after": 0
+}
+```
+
+Operational note:
+
+- Async resync requires the InvenTree worker to be running from the main checkout with `cd /home/inventree && source dev/venv/bin/activate && invoke worker`.
+
+#### `POST /plugin/supplierscout/clearcache`
+
+Clear cached supplier API responses.
+
+Request body for one supplier:
+
+```json
+{
+   "supplier": 7
+}
+```
+
+Request body for all suppliers:
+
+```json
+{}
+```
+
+Response highlights:
+
+- Supplier-specific response returns `scope = supplier` plus a `cache` object.
+- Global response returns `scope = all` plus a `suppliers` list.
+- Cache paths are intentionally sanitized before being returned.
+
+Example supplier response:
+
+```json
+{
+   "message": "OK",
+   "scope": "supplier",
+   "supplier_pk": 7,
+   "supplier_key": "mouser",
+   "cache": {
+      "enabled": true,
+      "cache_backend": "filesystem",
+      "cache_ttl_seconds": 3600,
+      "cache_path": "~/.cache/inventree_mouser",
+      "cache_file_count": 12,
+      "cache_size_bytes": 48219,
+      "cleared_file_count": 12,
+      "failed_file_count": 0
+   }
+}
+```
+
+#### `GET|POST /plugin/supplierscout/ratelimitstatus`
+
+Return current API usage state for one supplier or all configured suppliers.
+
+Inputs:
+
+- `GET /plugin/supplierscout/ratelimitstatus?supplier=7`
+- `POST` with body `{ "supplier": 7 }`
+- Omit `supplier` to return all registered suppliers.
+
+Response highlights:
+
+- `updated_ts` timestamp.
+- Per-supplier usage with `configured`, `rate_limit_per_second`, `daily_limit`, `daily_count`, `daily_remaining`, `daily_percent_used`, and `daily_reset_at`.
+
+#### `GET /plugin/supplierscout/dashboardmetrics`
+
+Return dashboard diagnostics for every registered supplier.
+
+Response highlights:
+
+- `query_metrics` for historical request totals.
+- `api_usage` for current rate-limit counters.
+- `cache_status` for dashboard-visible cache diagnostics.
+
+This endpoint is used by the dashboard card and currently does not require part-write permission.
+
+#### `GET|POST /plugin/supplierscout/tokendebug`
+
+Inspect how Supplier Scout derived the search query for a part.
+
+Inputs:
+
+- `GET /plugin/supplierscout/tokendebug?pk=123`
+- `POST` with body `{ "pk": 123 }`
+
+Response highlights:
+
+- Top-level `part_pk` and `query`.
+- `debug.tokens`, `debug.token_sources`, and `debug.token_attribution`.
+- `debug.semantic_hints` for inferred component type and extracted values.
+- `debug.query_debug` for `name_mode`, `has_structured_tokens`, `include_name_tokens`, `source_token_map`, and `final_query_tokens`.
+
+Example response:
+
+```json
+{
+   "message": "OK",
+   "part_pk": 123,
+   "query": "capacitor 100nF 0402 16V",
+   "debug": {
+      "query_debug": {
+         "name_mode": "fallback",
+         "has_structured_tokens": true,
+         "include_name_tokens": false,
+         "final_query_tokens": ["capacitor", "100nF", "0402", "16V"]
+      }
+   }
+}
+```
+
+### Common Error Responses
+
+Most endpoints return a JSON payload with a `message` field on validation or permission failures.
+
+Common cases:
+
+- `400` for invalid supplier or part identifiers.
+- `403` for missing part-write permission or admin-only operations.
+- `404` for unknown suppliers or missing parts.
+- `500` for unexpected internal failures.
+- `503` from `runresync` when async queue submission fails.
 
 ## How Search Tokens Are Derived
 

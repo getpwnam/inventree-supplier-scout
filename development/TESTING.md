@@ -46,6 +46,165 @@ coverage xml
 Coverage is uploaded in CI via the GitHub Actions workflow at `.github/workflows/ci.yaml`.
 If `CODECOV_TOKEN` is not configured, CI will skip Codecov upload and still enforce the local coverage threshold.
 
+## Manual API Smoke Tests
+
+Supplier Scout endpoints are mounted under `/plugin/supplierscout/` inside the running InvenTree instance.
+
+Browser-based checks are often the easiest option because they reuse your authenticated session and CSRF context. In Edge or Chrome dev tools, run `fetch(...)` from an InvenTree page after opening the app in the browser.
+
+If your console session does not already define a CSRF helper, paste this first:
+
+```js
+function getCookie(name) {
+	return document.cookie
+		.split(';')
+		.map((item) => item.trim())
+		.find((item) => item.startsWith(`${name}=`))
+		?.slice(name.length + 1) || '';
+}
+```
+
+### Clear one supplier cache
+
+```js
+fetch('/plugin/supplierscout/clearcache.json', {
+	method: 'POST',
+	credentials: 'same-origin',
+	headers: {
+		'Content-Type': 'application/json',
+		'X-CSRFToken': getCookie('csrftoken'),
+	},
+	body: JSON.stringify({ supplier: 7 }),
+}).then((r) => r.json())
+```
+
+Expected result:
+
+- HTTP `200`
+- `scope: "supplier"`
+- `cache.cleared_file_count` and `cache.failed_file_count`
+
+### Clear all supplier caches
+
+```js
+fetch('/plugin/supplierscout/clearcache.json', {
+	method: 'POST',
+	credentials: 'same-origin',
+	headers: {
+		'Content-Type': 'application/json',
+		'X-CSRFToken': getCookie('csrftoken'),
+	},
+	body: JSON.stringify({}),
+}).then((r) => r.json())
+```
+
+Expected result:
+
+- HTTP `200`
+- `scope: "all"`
+- `suppliers` array with per-supplier cache results
+
+### Reset the scheduled resync cursor
+
+```js
+fetch('/plugin/supplierscout/runresync.json', {
+	method: 'POST',
+	credentials: 'same-origin',
+	headers: {
+		'Content-Type': 'application/json',
+		'X-CSRFToken': getCookie('csrftoken'),
+	},
+	body: JSON.stringify({ supplier: 7, action: 'reset_cursor' }),
+}).then((r) => r.json())
+```
+
+Expected result:
+
+- HTTP `200`
+- `action: "reset_cursor"`
+- `cursor_after: 0`
+
+### Run a synchronous supplier resync
+
+```js
+fetch('/plugin/supplierscout/runresync.json', {
+	method: 'POST',
+	credentials: 'same-origin',
+	headers: {
+		'Content-Type': 'application/json',
+		'X-CSRFToken': getCookie('csrftoken'),
+	},
+	body: JSON.stringify({ supplier: 7 }),
+}).then((r) => r.json())
+```
+
+Expected result:
+
+- HTTP `200`
+- `action: "resync"`
+- counters like `processed`, `updated`, `failed`, and `skipped`
+
+### Run an asynchronous supplier resync
+
+```js
+fetch('/plugin/supplierscout/runresync.json', {
+	method: 'POST',
+	credentials: 'same-origin',
+	headers: {
+		'Content-Type': 'application/json',
+		'X-CSRFToken': getCookie('csrftoken'),
+	},
+	body: JSON.stringify({ supplier: 7, async: true }),
+}).then((r) => r.json())
+```
+
+Expected result:
+
+- HTTP `202`
+- `queued: true`
+- `task_id` and `task_url`
+
+Important:
+
+- The queued task will stay pending until the InvenTree background worker is running.
+- Start it from `/home/inventree`, not this plugin repo:
+
+```bash
+cd /home/inventree
+source dev/venv/bin/activate
+invoke worker
+```
+
+### Poll background task status
+
+```js
+fetch('/api/background-task/<task_id>/', {
+	credentials: 'same-origin',
+}).then((r) => r.json())
+```
+
+Expected result for a successful run:
+
+- `exists: true`
+- `pending: false`
+- `complete: true`
+- `success: true`
+- `http_status: 200`
+
+### Token debug and rate limit status
+
+```js
+fetch('/plugin/supplierscout/tokendebug.json?pk=123', {
+	credentials: 'same-origin',
+}).then((r) => r.json())
+
+fetch('/plugin/supplierscout/ratelimitstatus.json?supplier=7', {
+	credentials: 'same-origin',
+}).then((r) => r.json())
+```
+
+Use these endpoints to verify query construction and supplier quota visibility while testing the search panel.
+
 ## Run CI Checks Locally (Pipeline Equivalent)
 
 Run the backend CI checks locally:

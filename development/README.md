@@ -2,6 +2,24 @@
 
 This directory contains local developer tooling for branch switching, frontend static sync, and generated artifact cleanup.
 
+## Background Workers In The Dev Container
+
+Async Supplier Scout resync jobs are consumed by the InvenTree background worker, not by this plugin repository directly.
+
+Start the worker from the main InvenTree checkout:
+
+```bash
+cd /home/inventree
+source dev/venv/bin/activate
+invoke worker
+```
+
+Why this matters:
+
+- `invoke` must run from the repository that contains InvenTree's `tasks.py`.
+- Running `invoke worker` from `/home/inventree-supplier-scout` fails with `Can't find any collection named 'tasks'!` because this plugin repository does not define the InvenTree invoke task collection.
+- Supplier Scout async responses return a task URL like `/api/background-task/<task_id>/`; that task will remain pending until the InvenTree worker is running.
+
 ## Sourcemaps (What They Are)
 
 When frontend code is bundled, many source files become a few compiled JavaScript files in `supplier_scout/static/`.

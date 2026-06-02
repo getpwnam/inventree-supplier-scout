@@ -137,11 +137,19 @@ class MouserSupplierAdapter(BaseSupplierAdapter):
 
     def _get_search_api_key(self, user=None):
         if user is not None:
-            user_key = self.plugin.get_user_setting(
-                self.search_api_key_setting, user=user, backup_value=None
-            )
-            if user_key not in (None, ""):
-                return str(user_key).strip()
+            try:
+                user_key = self.plugin.get_user_setting(
+                    self.search_api_key_setting, user=user, backup_value=None
+                )
+                if user_key not in (None, ""):
+                    return str(user_key).strip()
+            except Exception as error:
+                logger.warning(
+                    "SupplierScout user API key read failed supplier=%s user=%s error=%s",
+                    self.key,
+                    getattr(user, "username", None) or getattr(user, "pk", None),
+                    error,
+                )
         global_key = self.get_setting(self.search_api_key_setting, backup_value="")
         return str(global_key).strip()
 

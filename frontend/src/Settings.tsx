@@ -14,13 +14,14 @@ function PluginSettingsDisplay({
     <Alert color='blue' title='Supplier Scout'>
       <Stack gap='xs'>
         <Text size='sm'>
-          Configure supplier credentials and query defaults from the plugin
-          settings below, then use Supplier Scout from each part record to find
-          supplier matches.
+          Configure supplier IDs, credentials, and query defaults from the
+          plugin settings below, then use Supplier Scout from each part record
+          to find supplier matches.
         </Text>
         <List size='sm' spacing='xs'>
           <List.Item>
-            Add API credentials for each enabled supplier integration.
+            Add the supplier company ID and API credentials for each enabled
+            supplier integration.
           </List.Item>
           <List.Item>
             Review default quantity overrides to control price-break lookups.

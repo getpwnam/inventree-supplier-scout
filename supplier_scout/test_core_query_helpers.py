@@ -287,9 +287,49 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         self.assertEqual(SupplierScout.USER_SETTINGS["RANKING_STRATEGY"]["default"], "")
         self.assertEqual(SupplierScout.USER_SETTINGS["TOP_N_CANDIDATES"]["default"], "")
 
+    def test_get_effective_setting_fallbacks_when_user_read_fails(self):
+        self.scout.user_settings = {"TOP_N_CANDIDATES": {"default": ""}}
+        self.scout.get_setting = lambda key, backup_value=None: {
+            "TOP_N_CANDIDATES": 10
+        }.get(key, backup_value)
+
+        def raise_on_user_setting(*args, **kwargs):
+            del args, kwargs
+            raise RuntimeError("user setting read failed")
+
+        self.scout.get_user_setting = raise_on_user_setting
+
+        user = types.SimpleNamespace(username="demo-user", pk=1)
+        value = SupplierScout.get_effective_setting(
+            self.scout, "TOP_N_CANDIDATES", user=user, backup_value=5
+        )
+
+        self.assertEqual(value, 10)
+
     def test_supplier_adapters_include_digikey_and_mouser(self):
         self.assertIn("digikey", SupplierScout.SUPPLIER_ADAPTERS)
         self.assertIn("mouser", SupplierScout.SUPPLIER_ADAPTERS)
+
+    def test_search_ready_suppliers_fallbacks_to_global_credentials(self):
+        class FallbackAdapter:
+            key = "mouser"
+
+            def has_search_credentials(self, user=None):
+                if user is not None:
+                    raise RuntimeError("user setting read failed")
+                return True
+
+        registration = {"key": "mouser", "pk": 7, "name": "Mouser"}
+
+        self.scout._get_registered_suppliers = lambda: [registration]
+        self.scout._get_supplier_definition = (
+            lambda supplier_key: FallbackAdapter() if supplier_key == "mouser" else None
+        )
+
+        user = types.SimpleNamespace(username="demo-user", pk=1)
+        ready = self.scout._get_search_ready_suppliers(user=user)
+
+        self.assertEqual(ready, [registration])
 
     def test_normalize_capacitance_token_variants(self):
         self.assertEqual(self.scout._normalize_capacitance_token("10u"), "10uF")

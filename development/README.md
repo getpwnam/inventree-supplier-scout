@@ -2,6 +2,16 @@
 
 This directory contains local developer tooling for branch switching, frontend static sync, and generated artifact cleanup.
 
+## Release Workflow
+
+Use [development/RELEASING.md](RELEASING.md) for a reusable release checklist template (including `v0.1.1` guidance).
+
+For an automated readiness pass from repo root:
+
+```bash
+bash development/scripts/release-readiness.sh
+```
+
 ## Background Workers In The Dev Container
 
 Async Supplier Scout resync jobs are consumed by the InvenTree background worker, not by this plugin repository directly.

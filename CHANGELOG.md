@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.1.2 - Unreleased
+
+### Added
+
+- Added a part-panel fallback for Supplier Match on InvenTree versions that do
+  not support `primary_action` plugin UI features.
+- Added a compatibility matrix and release compatibility policy to project
+  documentation.
+- Added frontend CI matrix coverage for stable and bleeding-edge UI tracks.
+
+### Changed
+
+- Pinned frontend dependencies to a stable-compatible UI surface to avoid
+  cross-track dependency drift.
+- Removed strict plugin-version frontend checks that produced noisy mismatch
+  warnings across supported InvenTree tracks.
+- Updated local testing documentation with stable and edge frontend build
+  validation steps.
+
+### User Impact
+
+- SupplierScout remains usable on stable InvenTree releases without requiring a
+  bleeding-edge InvenTree build.
+- SupplierScout continues to run on bleeding-edge InvenTree while maintaining
+  stable compatibility.
+- Plugin UI no longer reports misleading version mismatch warnings during normal
+  cross-track use.
+
+### Developer Experience
+
+- Frontend compatibility is now validated in CI against both stable and edge UI
+  dependency tracks before release.
+
 ## v0.1.1 - 2026-06-02
 
 ### Fixed

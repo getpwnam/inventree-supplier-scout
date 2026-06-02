@@ -158,6 +158,19 @@ class TestMouserSupplierAdapter(unittest.TestCase):
         self.assertIn("countryCode=US", url)
         self.assertIn("currencyCode=EUR", url)
 
+    def test_get_search_api_key_falls_back_to_global_when_user_setting_read_fails(self):
+        user = types.SimpleNamespace(username="demo-user")
+        adapter = MouserSupplierAdapter(
+            DummyPlugin(settings={"MOUSER_APIKEY_SEARCH": " global-key "})
+        )
+        adapter.plugin.get_user_setting = MagicMock(side_effect=RuntimeError("boom"))
+
+        with patch("supplier_scout.mouser.logger") as mock_logger:
+            api_key = adapter._get_search_api_key(user=user)
+
+        self.assertEqual(api_key, "global-key")
+        mock_logger.warning.assert_called_once()
+
     def test_post_raises_when_daily_limit_reached(self):
         self.adapter.plugin.settings["MOUSER_API_RATE_LIMIT_PER_SECOND"] = 0
         self.adapter.plugin.settings["MOUSER_API_DAILY_LIMIT"] = 1

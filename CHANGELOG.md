@@ -19,3 +19,8 @@ All notable changes to this project will be documented in this file.
 ### Compatibility
 
 - Backward-compatible with existing plugin configuration.
+
+### Developer Experience
+
+- Added a release checklist and a one-command release readiness script to make
+  packaging and publish preparation more consistent.

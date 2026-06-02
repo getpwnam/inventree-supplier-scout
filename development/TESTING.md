@@ -1,5 +1,7 @@
 # Testing and Coverage
 
+For release-specific steps and a one-command readiness script, see [development/RELEASING.md](RELEASING.md).
+
 ## Backend Translation Check
 
 Run the backend translation guard locally:

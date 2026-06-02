@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <rect width="960" height="540" fill="#f9fafb"/>
+  <rect x="40" y="28" width="880" height="72" rx="12" fill="#334155"/>
+  <text x="65" y="73" font-family="Arial, sans-serif" font-size="28" fill="#ffffff">Supplier Scout Plugin Settings</text>
+  <rect x="40" y="120" width="880" height="380" rx="12" fill="#ffffff" stroke="#d1d5db"/>
+  <text x="65" y="158" font-family="Arial, sans-serif" font-size="18" fill="#111827">Configure supplier IDs and credentials</text>
+  <rect x="65" y="176" width="830" height="38" rx="6" fill="#eef2ff"/>
+  <text x="80" y="201" font-family="Arial, sans-serif" font-size="14" fill="#374151">DIGIKEY_PK: 7</text>
+  <rect x="65" y="226" width="830" height="38" rx="6" fill="#eef2ff"/>
+  <text x="80" y="251" font-family="Arial, sans-serif" font-size="14" fill="#374151">DIGIKEY_CLIENT_ID: ********</text>
+  <rect x="65" y="276" width="830" height="38" rx="6" fill="#eef2ff"/>
+  <text x="80" y="301" font-family="Arial, sans-serif" font-size="14" fill="#374151">MOUSER_PK: 9</text>
+  <rect x="65" y="326" width="830" height="38" rx="6" fill="#eef2ff"/>
+  <text x="80" y="351" font-family="Arial, sans-serif" font-size="14" fill="#374151">MOUSER_APIKEY_SEARCH: ********</text>
+  <rect x="65" y="412" width="150" height="40" rx="6" fill="#dcfce7"/>
+  <text x="118" y="438" font-family="Arial, sans-serif" font-size="14" fill="#166534">Save</text>
+</svg>

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <rect width="960" height="540" fill="#f5f7fb"/>
+  <rect x="40" y="30" width="880" height="60" rx="10" fill="#1f3a8a"/>
+  <text x="65" y="68" font-family="Arial, sans-serif" font-size="26" fill="#ffffff">Supplier Match</text>
+  <rect x="40" y="110" width="360" height="380" rx="12" fill="#ffffff" stroke="#d1d5db"/>
+  <text x="60" y="150" font-family="Arial, sans-serif" font-size="20" fill="#111827">Search Options</text>
+  <rect x="60" y="170" width="320" height="38" rx="6" fill="#eef2ff"/>
+  <text x="70" y="195" font-family="Arial, sans-serif" font-size="15" fill="#374151">Query: 10k 0603 resistor</text>
+  <rect x="60" y="225" width="150" height="34" rx="6" fill="#eef2ff"/>
+  <text x="70" y="247" font-family="Arial, sans-serif" font-size="14" fill="#374151">Supplier: Mouser</text>
+  <rect x="60" y="275" width="120" height="34" rx="6" fill="#dcfce7"/>
+  <text x="78" y="297" font-family="Arial, sans-serif" font-size="14" fill="#166534">Find Matches</text>
+  <rect x="420" y="110" width="500" height="380" rx="12" fill="#ffffff" stroke="#d1d5db"/>
+  <text x="440" y="150" font-family="Arial, sans-serif" font-size="20" fill="#111827">Ranked Candidates</text>
+  <rect x="440" y="170" width="460" height="40" rx="6" fill="#f9fafb"/>
+  <text x="455" y="195" font-family="Arial, sans-serif" font-size="14" fill="#374151">☑ RC0603FR-0710KL • In stock • $0.01 @100</text>
+  <rect x="440" y="220" width="460" height="40" rx="6" fill="#f9fafb"/>
+  <text x="455" y="245" font-family="Arial, sans-serif" font-size="14" fill="#374151">☐ CRCW060310K0FKEA • In stock • $0.02 @50</text>
+  <rect x="440" y="430" width="150" height="36" rx="6" fill="#dbeafe"/>
+  <text x="466" y="453" font-family="Arial, sans-serif" font-size="14" fill="#1d4ed8">Add Selected</text>
+</svg>

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <rect width="960" height="540" fill="#f8fafc"/>
+  <rect x="40" y="30" width="880" height="70" rx="12" fill="#0f766e"/>
+  <text x="65" y="73" font-family="Arial, sans-serif" font-size="28" fill="#ffffff">Supplier Scout Metrics</text>
+  <rect x="40" y="120" width="880" height="360" rx="12" fill="#ffffff" stroke="#d1d5db"/>
+  <rect x="60" y="160" width="840" height="42" rx="6" fill="#f1f5f9"/>
+  <text x="75" y="187" font-family="Arial, sans-serif" font-size="14" fill="#334155">Supplier</text>
+  <text x="220" y="187" font-family="Arial, sans-serif" font-size="14" fill="#334155">Status</text>
+  <text x="340" y="187" font-family="Arial, sans-serif" font-size="14" fill="#334155">Queries (ok/error)</text>
+  <text x="560" y="187" font-family="Arial, sans-serif" font-size="14" fill="#334155">API Budget</text>
+  <text x="750" y="187" font-family="Arial, sans-serif" font-size="14" fill="#334155">Cache</text>
+  <rect x="60" y="215" width="840" height="52" rx="6" fill="#f8fafc"/>
+  <text x="75" y="247" font-family="Arial, sans-serif" font-size="15" fill="#0f172a">Mouser</text>
+  <text x="220" y="247" font-family="Arial, sans-serif" font-size="15" fill="#166534">Configured</text>
+  <text x="340" y="247" font-family="Arial, sans-serif" font-size="15" fill="#0f172a">321 (300/21)</text>
+  <text x="560" y="247" font-family="Arial, sans-serif" font-size="15" fill="#0f172a">321 / 1000</text>
+  <text x="750" y="247" font-family="Arial, sans-serif" font-size="15" fill="#0f172a">12 files</text>
+  <rect x="60" y="279" width="840" height="52" rx="6" fill="#f8fafc"/>
+  <text x="75" y="311" font-family="Arial, sans-serif" font-size="15" fill="#0f172a">DigiKey</text>
+  <text x="220" y="311" font-family="Arial, sans-serif" font-size="15" fill="#166534">Configured</text>
+  <text x="340" y="311" font-family="Arial, sans-serif" font-size="15" fill="#0f172a">212 (210/2)</text>
+  <text x="560" y="311" font-family="Arial, sans-serif" font-size="15" fill="#0f172a">212 / 1000</text>
+  <text x="750" y="311" font-family="Arial, sans-serif" font-size="15" fill="#0f172a">8 files</text>
+</svg>

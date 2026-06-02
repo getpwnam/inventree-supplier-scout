@@ -1,7 +1,4 @@
-import {
-  checkPluginVersion,
-  type InvenTreePluginContext
-} from '@inventreedb/ui';
+import type { InvenTreePluginContext } from '@inventreedb/ui';
 import {
   ActionIcon,
   Alert,
@@ -15,7 +12,6 @@ import {
   MultiSelect,
   NativeSelect,
   Paper,
-  Pill,
   ScrollArea,
   Stack,
   Table,
@@ -281,6 +277,7 @@ function SupplierScoutMatcher({
   onClose?: () => void;
   modalId?: string;
 }) {
+  const CollapseCompat = Collapse as any;
   const apiUsageSectionId = useId();
   const searchQuerySectionId = useId();
   const suppliers = serverContext.suppliers || [];
@@ -1226,7 +1223,11 @@ function SupplierScoutMatcher({
             )}
           </Group>
         </UnstyledButton>
-        <Collapse id={apiUsageSectionId} expanded={showApiUsage}>
+        <CollapseCompat
+          id={apiUsageSectionId}
+          in={showApiUsage}
+          {...({ expanded: showApiUsage } as any)}
+        >
           <Stack gap='xs' mt='xs'>
             {renderRateBadge()}
             <Group justify='flex-end'>
@@ -1240,7 +1241,7 @@ function SupplierScoutMatcher({
               </Button>
             </Group>
           </Stack>
-        </Collapse>
+        </CollapseCompat>
       </Paper>
 
       <Paper withBorder p='xs' radius='md'>
@@ -1261,7 +1262,11 @@ function SupplierScoutMatcher({
             </Text>
           </Group>
         </UnstyledButton>
-        <Collapse id={searchQuerySectionId} expanded={showTokens}>
+        <CollapseCompat
+          id={searchQuerySectionId}
+          in={showTokens}
+          {...({ expanded: showTokens } as any)}
+        >
           <Stack gap='sm' mt='xs'>
             {loadingTokens && (
               <Group gap='xs'>
@@ -1349,26 +1354,6 @@ function SupplierScoutMatcher({
               value={queryTags}
               onChange={(nextTags) => updateQueryTagsWithSync(nextTags)}
               disabled={loadingTokens}
-              renderPill={({ value, onRemove, disabled, reorderProps }) => {
-                const pillValue = String(value || '');
-                const source = getPillSourceForTag(pillValue, tagSourceByToken);
-                const sourceMeta = TOKEN_PILL_META[source];
-
-                return (
-                  <Pill
-                    withRemoveButton={!disabled}
-                    onRemove={onRemove}
-                    style={{
-                      backgroundColor: `var(--mantine-color-${sourceMeta.color}-light)`,
-                      color: `var(--mantine-color-${sourceMeta.color}-8)`,
-                      border: `1px solid var(--mantine-color-${sourceMeta.color}-3)`
-                    }}
-                    {...reorderProps}
-                  >
-                    {pillValue}
-                  </Pill>
-                );
-              }}
               placeholder={
                 queryTags.length === 0 ? 'Type and press Enter to add tags' : ''
               }
@@ -1395,7 +1380,7 @@ function SupplierScoutMatcher({
               </Stack>
             )}
           </Stack>
-        </Collapse>
+        </CollapseCompat>
       </Paper>
 
       <Group gap='xs' align='center' wrap='wrap'>
@@ -1681,8 +1666,10 @@ function SupplierScoutMatcher({
 
 function SupplierScoutPanel({ context }: { context: InvenTreePluginContext }) {
   const serverContext = useMemo(() => {
-    return (context.instance || {}) as MatcherContext;
-  }, [context.instance]);
+    return (
+      ((context.context || context.instance || {}) as MatcherContext) || {}
+    );
+  }, [context.context, context.instance]);
 
   return (
     <Stack gap='sm'>
@@ -1693,8 +1680,6 @@ function SupplierScoutPanel({ context }: { context: InvenTreePluginContext }) {
 }
 
 export function renderSupplierScoutPanel(context: InvenTreePluginContext) {
-  checkPluginVersion(context);
-
   return (
     <LocalizedComponent locale={context.locale}>
       <SupplierScoutPanel context={context} />

@@ -234,6 +234,25 @@ npm run build
 npm run lint
 ```
 
+Run the frontend compatibility matrix locally (stable + edge UI dependency):
+
+```bash
+cd frontend
+
+# Stable track
+npm ci
+npm run translate
+npm run build
+npm run lint
+
+# Edge track
+npm ci
+npm install --no-save @inventreedb/ui@1.4.0
+npm run translate
+npm run build
+npm run lint
+```
+
 ## See CI and Coverage on GitHub
 
 1. Push a branch and open a pull request.

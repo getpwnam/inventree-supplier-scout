@@ -22,6 +22,30 @@
 
 Additional suppliers can be added by implementing a `BaseSupplierAdapter` subclass.
 
+## InvenTree Compatibility
+
+- InvenTree versions that support the `primary_action` plugin UI feature show a
+   **Supplier Match** button in the part header actions.
+- Older InvenTree versions (where `primary_action` is not supported) use a
+   fallback **Supplier Match** plugin panel on the part detail page.
+
+This keeps SupplierScout usable on stable releases while preserving the newer
+header-action experience where available.
+
+### Compatibility Matrix
+
+| InvenTree track | Plugin UI mode | SupplierScout status |
+|---|---|---|
+| Stable release | Fallback panel (and supported actions) | Supported |
+| Bleeding edge / development | Primary action + fallback compatibility path | Supported |
+
+### Release Compatibility Policy
+
+- SupplierScout ships as a single PyPI package that targets both stable and bleeding-edge InvenTree tracks.
+- Frontend builds are kept compatible with the stable API surface by default.
+- Newer UI features are enabled via runtime capability checks so stable deployments continue to function.
+- CI validates frontend compatibility against both stable and bleeding-edge plugin UI dependency tracks before release.
+
 ## Installation
 
 ### Via the InvenTree Plugin Manager (recommended)

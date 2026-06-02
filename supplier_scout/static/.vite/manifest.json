@@ -1,8 +1,4 @@
 {
-  "_StoredTableState-Db-JLS3K.js": {
-    "file": "assets/StoredTableState-Db-JLS3K.js",
-    "name": "StoredTableState"
-  },
   "_locale-BKh4n2ad.js": {
     "file": "assets/locale-BKh4n2ad.js",
     "name": "locale",
@@ -23,10 +19,7 @@
     "file": "Dashboard.js",
     "name": "Dashboard",
     "src": "src/Dashboard.tsx",
-    "isEntry": true,
-    "imports": [
-      "_StoredTableState-Db-JLS3K.js"
-    ]
+    "isEntry": true
   },
   "src/Panel.tsx": {
     "file": "Panel.js",
@@ -34,7 +27,6 @@
     "src": "src/Panel.tsx",
     "isEntry": true,
     "imports": [
-      "_StoredTableState-Db-JLS3K.js",
       "_locale-BKh4n2ad.js"
     ]
   },
@@ -44,7 +36,6 @@
     "src": "src/Settings.tsx",
     "isEntry": true,
     "imports": [
-      "_StoredTableState-Db-JLS3K.js",
       "_locale-BKh4n2ad.js"
     ]
   },

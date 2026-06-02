@@ -287,6 +287,25 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         self.assertEqual(SupplierScout.USER_SETTINGS["RANKING_STRATEGY"]["default"], "")
         self.assertEqual(SupplierScout.USER_SETTINGS["TOP_N_CANDIDATES"]["default"], "")
 
+    def test_get_effective_setting_fallbacks_when_user_read_fails(self):
+        self.scout.user_settings = {"TOP_N_CANDIDATES": {"default": ""}}
+        self.scout.get_setting = lambda key, backup_value=None: {
+            "TOP_N_CANDIDATES": 10
+        }.get(key, backup_value)
+
+        def raise_on_user_setting(*args, **kwargs):
+            del args, kwargs
+            raise RuntimeError("user setting read failed")
+
+        self.scout.get_user_setting = raise_on_user_setting
+
+        user = types.SimpleNamespace(username="demo-user", pk=1)
+        value = SupplierScout.get_effective_setting(
+            self.scout, "TOP_N_CANDIDATES", user=user, backup_value=5
+        )
+
+        self.assertEqual(value, 10)
+
     def test_supplier_adapters_include_digikey_and_mouser(self):
         self.assertIn("digikey", SupplierScout.SUPPLIER_ADAPTERS)
         self.assertIn("mouser", SupplierScout.SUPPLIER_ADAPTERS)

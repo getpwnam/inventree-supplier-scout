@@ -162,22 +162,28 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
 
     def _get_client_id(self, user=None):
         if user is not None:
-            user_client_id = self.plugin.get_user_setting(
-                DIGIKEY_CLIENT_ID_SETTING, user=user, backup_value=None
-            )
-            if user_client_id not in (None, ""):
-                return str(user_client_id).strip()
+            try:
+                user_client_id = self.plugin.get_user_setting(
+                    DIGIKEY_CLIENT_ID_SETTING, user=user, backup_value=None
+                )
+                if user_client_id not in (None, ""):
+                    return str(user_client_id).strip()
+            except Exception:
+                pass
 
         global_client_id = self.get_setting(DIGIKEY_CLIENT_ID_SETTING, backup_value="")
         return str(global_client_id).strip()
 
     def _get_client_secret(self, user=None):
         if user is not None:
-            user_client_secret = self.plugin.get_user_setting(
-                DIGIKEY_CLIENT_SECRET_SETTING, user=user, backup_value=None
-            )
-            if user_client_secret not in (None, ""):
-                return str(user_client_secret).strip()
+            try:
+                user_client_secret = self.plugin.get_user_setting(
+                    DIGIKEY_CLIENT_SECRET_SETTING, user=user, backup_value=None
+                )
+                if user_client_secret not in (None, ""):
+                    return str(user_client_secret).strip()
+            except Exception:
+                pass
 
         global_client_secret = self.get_setting(
             DIGIKEY_CLIENT_SECRET_SETTING, backup_value=""
@@ -389,7 +395,9 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
 
         variations = [
             variation
-            for variation in self._coerce_list(product_data.get("ProductVariations") or [])
+            for variation in self._coerce_list(
+                product_data.get("ProductVariations") or []
+            )
             if isinstance(variation, dict)
         ]
         primary_variation = variations[0] if variations else {}

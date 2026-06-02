@@ -218,9 +218,17 @@ class SupplierScout(
     def get_effective_setting(self, key, user=None, backup_value=None):
         """Return user setting value if available, otherwise fallback to global setting."""
         if user and key in getattr(self, "user_settings", {}):
-            user_value = self.get_user_setting(key, user, backup_value=None)
-            if user_value not in [None, ""]:
-                return user_value
+            try:
+                user_value = self.get_user_setting(key, user, backup_value=None)
+                if user_value not in [None, ""]:
+                    return user_value
+            except Exception as error:
+                logger.warning(
+                    "SupplierScout user setting read failed key=%s user=%s error=%s",
+                    key,
+                    getattr(user, "username", None) or getattr(user, "pk", None),
+                    error,
+                )
         return self.get_setting(key, backup_value=backup_value)
 
     def get_scheduled_tasks(self):

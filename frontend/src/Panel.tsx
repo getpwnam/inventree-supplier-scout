@@ -12,6 +12,7 @@ import {
   MultiSelect,
   NativeSelect,
   Paper,
+  Pill,
   ScrollArea,
   Stack,
   Table,
@@ -24,7 +25,7 @@ import {
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { LocalizedComponent } from './locale';
 
 type Supplier = {
@@ -278,6 +279,7 @@ function SupplierScoutMatcher({
   modalId?: string;
 }) {
   const CollapseCompat = Collapse as any;
+  const queryTagsContainerRef = useRef<HTMLDivElement | null>(null);
   const apiUsageSectionId = useId();
   const searchQuerySectionId = useId();
   const suppliers = serverContext.suppliers || [];
@@ -391,6 +393,29 @@ function SupplierScoutMatcher({
     return Array.from(sources).sort(
       (left, right) => TOKEN_PILL_PRIORITY[right] - TOKEN_PILL_PRIORITY[left]
     );
+  }, [queryTags, tagSourceByToken]);
+
+  // Compatibility fallback: in runtimes where renderPill is not applied,
+  // style the rendered pills by token source after each query/source update.
+  useEffect(() => {
+    const root = queryTagsContainerRef.current;
+    if (!root) {
+      return;
+    }
+
+    const pills = Array.from(
+      root.querySelectorAll<HTMLElement>('.supplierscout-token-pill')
+    );
+
+    pills.forEach((pill, index) => {
+      const token = queryTags[index] || '';
+      const source = getPillSourceForTag(token, tagSourceByToken);
+      const sourceMeta = TOKEN_PILL_META[source];
+
+      pill.style.backgroundColor = `var(--mantine-color-${sourceMeta.color}-light)`;
+      pill.style.color = `var(--mantine-color-${sourceMeta.color}-8)`;
+      pill.style.border = `1px solid var(--mantine-color-${sourceMeta.color}-3)`;
+    });
   }, [queryTags, tagSourceByToken]);
 
   const activeRateStatuses = useMemo(
@@ -1348,18 +1373,47 @@ function SupplierScoutMatcher({
                 </Group>
               </Stack>
             )}
-            <TagsInput
-              label='Search query tags'
-              description='Each tag is sent as a search keyword. Add or remove tags manually.'
-              value={queryTags}
-              onChange={(nextTags) => updateQueryTagsWithSync(nextTags)}
-              disabled={loadingTokens}
-              placeholder={
-                queryTags.length === 0 ? 'Type and press Enter to add tags' : ''
-              }
-              splitChars={[' ', ',']}
-              clearable
-            />
+            <div ref={queryTagsContainerRef}>
+              <TagsInput
+                label='Search query tags'
+                description='Each tag is sent as a search keyword. Add or remove tags manually.'
+                value={queryTags}
+                onChange={(nextTags) => updateQueryTagsWithSync(nextTags)}
+                disabled={loadingTokens}
+                classNames={{ pill: 'supplierscout-token-pill' }}
+                renderPill={({ value, onRemove, disabled, reorderProps }) => {
+                  const pillValue = String(value || '');
+                  const source = getPillSourceForTag(
+                    pillValue,
+                    tagSourceByToken
+                  );
+                  const sourceMeta = TOKEN_PILL_META[source];
+
+                  return (
+                    <Pill
+                      className='supplierscout-token-pill'
+                      withRemoveButton={!disabled}
+                      onRemove={onRemove}
+                      style={{
+                        backgroundColor: `var(--mantine-color-${sourceMeta.color}-light)`,
+                        color: `var(--mantine-color-${sourceMeta.color}-8)`,
+                        border: `1px solid var(--mantine-color-${sourceMeta.color}-3)`
+                      }}
+                      {...reorderProps}
+                    >
+                      {pillValue}
+                    </Pill>
+                  );
+                }}
+                placeholder={
+                  queryTags.length === 0
+                    ? 'Type and press Enter to add tags'
+                    : ''
+                }
+                splitChars={[' ', ',']}
+                clearable
+              />
+            </div>
             {queryTags.length > 0 && (
               <Stack gap={4}>
                 <Text size='xs' c='dimmed'>

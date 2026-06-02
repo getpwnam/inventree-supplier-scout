@@ -2584,6 +2584,11 @@ class SupplierScout(
         if not self._user_has_part_write_permission(getattr(request, "user", None)):
             return []
 
+        # If a primary action can be rendered for this context, prefer that
+        # entry point and suppress the fallback panel to avoid duplicate UI.
+        if self.get_ui_primary_actions(request, context, **kwargs):
+            return []
+
         suppliers = self._get_search_ready_suppliers(user=request.user)
         if not suppliers:
             return []

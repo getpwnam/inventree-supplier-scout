@@ -291,6 +291,27 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         self.assertIn("digikey", SupplierScout.SUPPLIER_ADAPTERS)
         self.assertIn("mouser", SupplierScout.SUPPLIER_ADAPTERS)
 
+    def test_search_ready_suppliers_fallbacks_to_global_credentials(self):
+        class FallbackAdapter:
+            key = "mouser"
+
+            def has_search_credentials(self, user=None):
+                if user is not None:
+                    raise RuntimeError("user setting read failed")
+                return True
+
+        registration = {"key": "mouser", "pk": 7, "name": "Mouser"}
+
+        self.scout._get_registered_suppliers = lambda: [registration]
+        self.scout._get_supplier_definition = (
+            lambda supplier_key: FallbackAdapter() if supplier_key == "mouser" else None
+        )
+
+        user = types.SimpleNamespace(username="demo-user", pk=1)
+        ready = self.scout._get_search_ready_suppliers(user=user)
+
+        self.assertEqual(ready, [registration])
+
     def test_normalize_capacitance_token_variants(self):
         self.assertEqual(self.scout._normalize_capacitance_token("10u"), "10uF")
         self.assertEqual(self.scout._normalize_capacitance_token("4n7"), "4.7nF")

@@ -1706,10 +1706,36 @@ class SupplierScout(
             if adapter is None:
                 continue
 
-            if adapter.has_search_credentials(user=user):
+            if self._adapter_has_search_credentials(adapter, user=user):
                 ready.append(registration)
 
         return ready
+
+    def _adapter_has_search_credentials(self, adapter, user=None):
+        """Safely evaluate supplier credential readiness.
+
+        If user-specific setting access fails (e.g. invalid encrypted value),
+        fallback to global credentials so UI features remain available.
+        """
+        try:
+            return bool(adapter.has_search_credentials(user=user))
+        except Exception as error:
+            logger.warning(
+                "SupplierScout credential check failed supplier_key=%s user=%s error=%s",
+                getattr(adapter, "key", ""),
+                getattr(user, "username", None) or getattr(user, "pk", None),
+                error,
+            )
+
+            try:
+                return bool(adapter.has_search_credentials(user=None))
+            except Exception as fallback_error:
+                logger.warning(
+                    "SupplierScout global credential fallback failed supplier_key=%s error=%s",
+                    getattr(adapter, "key", ""),
+                    fallback_error,
+                )
+                return False
 
     def _get_supplier_max_candidates(self, supplier_pk, default=40):
         registration = self._get_supplier_registration(supplier_pk)
@@ -2218,7 +2244,7 @@ class SupplierScout(
         if adapter is None:
             return JsonResponse({"message": "Unknown supplier adapter"}, status=404)
 
-        if not adapter.has_search_credentials(user=request.user):
+        if not self._adapter_has_search_credentials(adapter, user=request.user):
             return JsonResponse(
                 {"message": "Supplier credentials are not configured"},
                 status=400,
@@ -2572,18 +2598,20 @@ class SupplierScout(
                 or None,
                 "part_pk": part.pk,
                 "show_score": bool(getattr(settings, "DEBUG", False)),
-                "top_n": int(
+                "top_n": self._to_int_from_string(
                     self.get_effective_setting(
                         "TOP_N_CANDIDATES", user=request.user, backup_value=10
-                    )
-                    or 10
+                    ),
+                    default=10,
                 ),
                 "suppliers": suppliers,
             },
             "options": {
                 "color": "blue" if action_enabled else "gray",
                 "disabled": not action_enabled,
-                "tooltip": "Configure at least one supplier API key in plugin settings"
+                "tooltip": (
+                    "Configure at least one supplier company ID and API key in plugin settings"
+                )
                 if not action_enabled
                 else "",
             },
@@ -2703,8 +2731,11 @@ class SupplierScout(
                 has_search_credentials = getattr(
                     adapter, "has_search_credentials", None
                 )
-                if callable(has_search_credentials) and not has_search_credentials(
-                    user=request.user
+                if callable(
+                    has_search_credentials
+                ) and not self._adapter_has_search_credentials(
+                    adapter,
+                    user=request.user,
                 ):
                     supplier_failures.append({
                         "supplier_key": registration_key,

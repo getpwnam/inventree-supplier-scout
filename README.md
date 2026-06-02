@@ -57,6 +57,9 @@ After activating the plugin, you must configure at least one supplier before you
    - DigiKey: `DIGIKEY_CLIENT_ID` and `DIGIKEY_CLIENT_SECRET`
    - Mouser: `MOUSER_APIKEY_SEARCH`
 4. Save. The *Supplier Match* action will now appear on every purchaseable part.
+   If you only set API credentials without a supplier company ID, the action
+   will stay hidden because the plugin has not been registered against a
+   supplier record yet.
 
 ## Usage
 

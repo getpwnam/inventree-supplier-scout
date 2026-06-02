@@ -168,8 +168,16 @@ class DigikeySupplierAdapter(MouserSupplierAdapter):
                 )
                 if user_client_id not in (None, ""):
                     return str(user_client_id).strip()
-            except Exception:
-                pass
+            except Exception as error:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "SupplierScout user credential read failed supplier=%s setting=%s user=%s error=%s",
+                    getattr(self, "key", "digikey"),
+                    DIGIKEY_CLIENT_ID_SETTING,
+                    getattr(user, "username", None) or getattr(user, "pk", None),
+                    error,
+                )
 
         global_client_id = self.get_setting(DIGIKEY_CLIENT_ID_SETTING, backup_value="")
         return str(global_client_id).strip()

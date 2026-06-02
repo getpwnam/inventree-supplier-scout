@@ -116,6 +116,7 @@ class SupplierScout(
     SLUG = "supplierscout"
     DESCRIPTION = _("Part search, matching and ordering with popular suppliers")
     VERSION = PLUGIN_VERSION
+    MIN_VERSION = "1.4.0.dev0"
 
     AUTHOR = "Charles Price"
     WEBSITE = "https://github.com/getpwnam/inventree-supplier-scout"

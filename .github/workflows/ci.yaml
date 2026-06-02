@@ -56,10 +56,6 @@ jobs:
   
   frontend:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        track: [stable, edge]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -71,12 +67,7 @@ jobs:
         run: |
           cd frontend
           npm ci
-      - name: Override UI dependency for edge track
-        if: ${{ matrix.track == 'edge' }}
-        run: |
-          cd frontend
-          npm install --no-save @inventreedb/ui@1.4.0
-      - name: Build Frontend (${{ matrix.track }})
+      - name: Build Frontend
         run: |
           cd frontend
           npm run translate

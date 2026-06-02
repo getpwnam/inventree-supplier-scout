@@ -234,20 +234,12 @@ npm run build
 npm run lint
 ```
 
-Run the frontend compatibility matrix locally (stable + edge UI dependency):
+Run the frontend checks locally:
 
 ```bash
 cd frontend
 
-# Stable track
 npm ci
-npm run translate
-npm run build
-npm run lint
-
-# Edge track
-npm ci
-npm install --no-save @inventreedb/ui@1.4.0
 npm run translate
 npm run build
 npm run lint

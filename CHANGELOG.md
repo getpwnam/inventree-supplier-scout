@@ -20,13 +20,13 @@ All notable changes to this project will be documented in this file.
   warnings across supported InvenTree tracks.
 - Updated local testing documentation with stable and edge frontend build
   validation steps.
+- Set plugin runtime minimum InvenTree requirement to `>=1.4.0.dev0`.
 
 ### User Impact
 
-- SupplierScout remains usable on stable InvenTree releases without requiring a
-  bleeding-edge InvenTree build.
-- SupplierScout continues to run on bleeding-edge InvenTree while maintaining
-  stable compatibility.
+- SupplierScout requires InvenTree `>=1.4.0.dev0`.
+- SupplierScout supports current stable `1.4.x` and bleeding-edge development
+  builds.
 - Plugin UI no longer reports misleading version mismatch warnings during normal
   cross-track use.
 

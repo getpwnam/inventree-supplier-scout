@@ -24,6 +24,8 @@ Additional suppliers can be added by implementing a `BaseSupplierAdapter` subcla
 
 ## InvenTree Compatibility
 
+- Minimum required InvenTree version: **1.4.0.dev0**
+
 - InvenTree versions that support the `primary_action` plugin UI feature show a
    **Supplier Match** button in the part header actions.
 - Older InvenTree versions (where `primary_action` is not supported) use a
@@ -36,15 +38,15 @@ header-action experience where available.
 
 | InvenTree track | Plugin UI mode | SupplierScout status |
 |---|---|---|
-| Stable release | Fallback panel (and supported actions) | Supported |
-| Bleeding edge / development | Primary action + fallback compatibility path | Supported |
+| `>= 1.4.0` stable release | Primary action + fallback compatibility path | Supported |
+| Bleeding edge / development (`1.4.0.dev0` and newer) | Primary action + fallback compatibility path | Supported |
 
 ### Release Compatibility Policy
 
 - SupplierScout ships as a single PyPI package that targets both stable and bleeding-edge InvenTree tracks.
-- Frontend builds are kept compatible with the stable API surface by default.
-- Newer UI features are enabled via runtime capability checks so stable deployments continue to function.
-- CI validates frontend compatibility against both stable and bleeding-edge plugin UI dependency tracks before release.
+- SupplierScout requires InvenTree `>= 1.4.0.dev0` at runtime.
+- Frontend builds target the InvenTree `1.4.x` plugin UI API surface.
+- CI validates frontend build and lint checks against the `1.4.x` dependency set before release.
 
 ## Installation
 

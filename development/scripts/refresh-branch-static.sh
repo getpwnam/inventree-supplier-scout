@@ -34,7 +34,7 @@ fi
 pushd "${FRONTEND_DIR}" >/dev/null
 if [[ "${NEW_HASH}" != "${OLD_HASH}" ]]; then
   echo "Detected frontend lockfile change. Running npm ci..."
-  npm ci
+  npm ci --loglevel=error
 else
   echo "Frontend lockfile unchanged. Reusing existing node_modules."
 fi

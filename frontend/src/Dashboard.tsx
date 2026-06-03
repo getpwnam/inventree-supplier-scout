@@ -35,6 +35,7 @@ type SupplierDashboardMetrics = {
     daily_limit?: number;
     daily_count?: number;
     daily_remaining?: number | null;
+    usage_is_estimated?: boolean;
   };
   cache_status?: {
     enabled?: boolean;
@@ -173,10 +174,19 @@ function SupplierScoutDashboardItem({
                         {query.total_candidates_returned || 0}
                       </Table.Td>
                       <Table.Td>
-                        {(usage.daily_count || 0) +
-                          '/' +
-                          (usage.daily_limit || 0) +
-                          ` day, ${usage.rate_limit_per_second || 0}/sec`}
+                        <Group gap='xs'>
+                          <Text size='sm'>
+                            {(usage.daily_count || 0) +
+                              '/' +
+                              (usage.daily_limit || 0) +
+                              ` day, ${usage.rate_limit_per_second || 0}/sec`}
+                          </Text>
+                          {usage.usage_is_estimated && (
+                            <Badge size='xs' variant='outline' color='gray'>
+                              Estimated
+                            </Badge>
+                          )}
+                        </Group>
                       </Table.Td>
                       <Table.Td>{formatCache(supplier.cache_status)}</Table.Td>
                     </Table.Tr>

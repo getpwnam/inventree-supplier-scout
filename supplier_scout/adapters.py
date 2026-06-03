@@ -172,6 +172,7 @@ class BaseSupplierAdapter:
     max_candidates_setting = ""
     api_rate_limit_per_second_default = 0
     api_daily_limit_default = 0
+    api_usage_is_estimated = True
 
     def __init__(self, plugin):
         self.plugin = plugin
@@ -409,6 +410,7 @@ class BaseSupplierAdapter:
             "daily_remaining": remaining_daily,
             "daily_percent_used": round(percent_used, 2),
             "daily_reset_at": reset_at,
+            "usage_is_estimated": bool(getattr(self, "api_usage_is_estimated", True)),
         }
 
     def get_cache_status(self):

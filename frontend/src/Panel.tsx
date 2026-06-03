@@ -108,6 +108,7 @@ type SupplierRateStatus = {
   daily_remaining?: number | null;
   daily_percent_used?: number;
   daily_reset_at?: string;
+  usage_is_estimated?: boolean;
 };
 
 type TokenPillSource =
@@ -888,6 +889,11 @@ function SupplierScoutMatcher({
                 <Badge variant='dot' color='blue' size='sm'>
                   {`${status.rate_limit_per_second || 0}/sec`}
                 </Badge>
+                {status.usage_is_estimated && (
+                  <Badge variant='outline' color='gray' size='xs'>
+                    Estimated
+                  </Badge>
+                )}
               </Group>
             );
           })}
@@ -936,6 +942,11 @@ function SupplierScoutMatcher({
         <Badge variant='dot' color='blue'>
           {`${rateStatus.rate_limit_per_second || 0}/sec`}
         </Badge>
+        {rateStatus.usage_is_estimated && (
+          <Badge variant='outline' color='gray' size='xs'>
+            Estimated
+          </Badge>
+        )}
         {rateStatus.daily_reset_at && (
           <Text size='xs' c='dimmed'>
             Resets:{' '}

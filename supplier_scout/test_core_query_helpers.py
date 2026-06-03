@@ -605,6 +605,7 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
     def test_get_rate_limit_status_payload_includes_supplier_usage(self):
         class FakeAdapter:
             key = "mouser"
+            api_usage_is_estimated = False
 
             def get_api_usage_status(self):
                 return {
@@ -615,6 +616,7 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
                     "daily_remaining": 958,
                     "daily_percent_used": 4.2,
                     "daily_reset_at": "2030-01-02T00:00:00Z",
+                    "usage_is_estimated": self.api_usage_is_estimated,
                 }
 
             def has_search_credentials(self, user=None):
@@ -634,6 +636,7 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         self.assertEqual(len(payload["suppliers"]), 1)
         self.assertEqual(payload["suppliers"][0]["supplier_pk"], 7)
         self.assertEqual(payload["suppliers"][0]["daily_count"], 42)
+        self.assertFalse(payload["suppliers"][0]["usage_is_estimated"])
         self.assertTrue(payload["suppliers"][0]["configured"])
 
     def test_search_candidates_requires_part_write_permission(self):

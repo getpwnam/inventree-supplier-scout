@@ -39,6 +39,12 @@ type Candidate = {
   description?: string;
   available_quantity?: number;
   unit_price?: number;
+  currency?: string;
+  price_breaks?: Array<{
+    quantity?: number;
+    price?: number;
+    currency?: string;
+  }>;
   score?: number;
   supplier_link?: string;
   existing_supplier_part?: boolean;
@@ -214,13 +220,35 @@ function deriveNameTokensFromValues(values: string[]): string[] {
   return tokens;
 }
 
-function formatUnitPrice(value: unknown): string {
-  const numeric = Number(value);
-  if (Number.isFinite(numeric)) {
-    return numeric.toFixed(3);
+function getUnitPriceCurrency(candidate: Candidate): string {
+  const directCurrency = String(candidate.currency || '').trim();
+  if (directCurrency) {
+    return directCurrency;
   }
 
-  return value == null ? '' : String(value);
+  const firstBreakCurrency = String(
+    candidate.price_breaks?.[0]?.currency || ''
+  ).trim();
+  if (firstBreakCurrency) {
+    return firstBreakCurrency;
+  }
+
+  return '';
+}
+
+function formatUnitPrice(value: unknown, currency = ''): string {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    const formatted = numeric.toFixed(3);
+    return currency ? `${formatted} ${currency}` : formatted;
+  }
+
+  if (value == null) {
+    return '';
+  }
+
+  const text = String(value);
+  return currency ? `${text} ${currency}` : text;
 }
 
 function formatDynamicColumnLabel(key: string): string {
@@ -1683,7 +1711,10 @@ function SupplierScoutMatcher({
                         )}
                         {visibleColumns.unitPrice && (
                           <Table.Td>
-                            {formatUnitPrice(candidate.unit_price)}
+                            {formatUnitPrice(
+                              candidate.unit_price,
+                              getUnitPriceCurrency(candidate)
+                            )}
                           </Table.Td>
                         )}
                         {selectedDynamicColumns.map((columnKey) => (

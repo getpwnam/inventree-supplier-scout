@@ -1,4 +1,4 @@
-# Getting Started (Web UI)
+# User Guide
 
 This quickstart walks through the day-to-day Supplier Scout workflow in the InvenTree web interface.
 
@@ -46,6 +46,6 @@ If UI actions are missing, check plugin settings and supplier credentials first.
 - Confirm a supplier company ID is configured (`DIGIKEY_PK` and/or `MOUSER_PK`).
 - Confirm supplier credentials are set globally or per-user.
 - Confirm your InvenTree system has plugin UI integration enabled.
-- For async/scheduled operations, confirm the background worker is running.
+- For async or scheduled operations, confirm the background worker is running.
 
 For endpoint-level troubleshooting and payload details, see [API.md](API.md).

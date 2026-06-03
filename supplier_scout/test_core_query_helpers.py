@@ -353,6 +353,26 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         self.settings["TOKEN_NAME_MODE"] = "unexpected"
         self.assertEqual(self.scout._get_name_token_mode(), "fallback")
 
+    def test_build_part_match_context_includes_expected_urls_and_defaults(self):
+        self.scout.base_url = "supplierscout/"
+        part = types.SimpleNamespace(pk=17)
+        user = types.SimpleNamespace(username="demo-user", pk=1)
+        suppliers = [{"key": "mouser", "pk": 7, "name": "Mouser"}]
+
+        with patch.object(
+            self.scout,
+            "_build_initial_search_query",
+            return_value="ATMEGA328",
+        ):
+            context = self.scout._build_part_match_context(part, user, suppliers)
+
+        self.assertEqual(context["title"], "Supplier Part Matching")
+        self.assertEqual(context["search_url"], "/supplierscout/searchcandidates")
+        self.assertEqual(context["apply_url"], "/supplierscout/applycandidates")
+        self.assertEqual(context["default_query"], "ATMEGA328")
+        self.assertEqual(context["part_pk"], 17)
+        self.assertEqual(context["suppliers"], suppliers)
+
     def test_query_plan_fallback_skips_name_with_structured_tokens(self):
         self.settings["TOKEN_NAME_MODE"] = "fallback"
         token_data = {
@@ -585,6 +605,7 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
     def test_get_rate_limit_status_payload_includes_supplier_usage(self):
         class FakeAdapter:
             key = "mouser"
+            api_usage_is_estimated = False
 
             def get_api_usage_status(self):
                 return {
@@ -595,6 +616,7 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
                     "daily_remaining": 958,
                     "daily_percent_used": 4.2,
                     "daily_reset_at": "2030-01-02T00:00:00Z",
+                    "usage_is_estimated": self.api_usage_is_estimated,
                 }
 
             def has_search_credentials(self, user=None):
@@ -614,6 +636,7 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         self.assertEqual(len(payload["suppliers"]), 1)
         self.assertEqual(payload["suppliers"][0]["supplier_pk"], 7)
         self.assertEqual(payload["suppliers"][0]["daily_count"], 42)
+        self.assertFalse(payload["suppliers"][0]["usage_is_estimated"])
         self.assertTrue(payload["suppliers"][0]["configured"])
 
     def test_search_candidates_requires_part_write_permission(self):

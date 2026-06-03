@@ -1,7 +1,4 @@
-import {
-  checkPluginVersion,
-  type InvenTreePluginContext
-} from '@inventreedb/ui';
+import type { InvenTreePluginContext } from '@inventreedb/ui';
 import { Alert, List, Stack, Text } from '@mantine/core';
 import { LocalizedComponent } from './locale';
 
@@ -36,8 +33,6 @@ function PluginSettingsDisplay({
 }
 
 export function renderPluginSettings(context: InvenTreePluginContext) {
-  checkPluginVersion(context);
-
   return (
     <LocalizedComponent locale={context.locale}>
       <PluginSettingsDisplay context={context} />

@@ -43,6 +43,7 @@ from .mouser import MouserSupplierAdapter
 logger = logging.getLogger(__name__)
 
 SUPPLIER_SCOUT_PLUGIN_SLUG = "supplierscout"
+PANEL_JS_CACHE_BUST = "20260603a"
 
 
 def run_supplier_resync_task(supplier_pk, part_pk=None):
@@ -116,6 +117,7 @@ class SupplierScout(
     SLUG = "supplierscout"
     DESCRIPTION = _("Part search, matching and ordering with popular suppliers")
     VERSION = PLUGIN_VERSION
+    MIN_VERSION = "1.4.0.dev0"
 
     AUTHOR = "Charles Price"
     WEBSITE = "https://github.com/getpwnam/inventree-supplier-scout"
@@ -2511,8 +2513,42 @@ class SupplierScout(
         except Exception as e:
             return self._handle_endpoint_exception("Token debug failed", e)
 
-    def get_ui_panels(self, request, context, **kwargs):
-        return []
+    def _build_part_match_context(self, part, user, suppliers):
+        return {
+            "title": "Supplier Part Matching",
+            "search_url": f"/{self.base_url}searchcandidates",
+            "apply_url": f"/{self.base_url}applycandidates",
+            "run_resync_url": f"/{self.base_url}runresync",
+            "rate_status_url": f"/{self.base_url}ratelimitstatus",
+            "token_debug_url": f"/{self.base_url}tokendebug",
+            "default_query": self._build_initial_search_query(part, user=user),
+            "default_min_qty": self._to_int_from_string(
+                self.get_effective_setting(
+                    "MOUSER_MIN_PRICE_QUANTITY",
+                    user=user,
+                    backup_value=1,
+                ),
+                default=1,
+            ),
+            "default_max_qty": self._to_int_from_string(
+                self.get_effective_setting(
+                    "MOUSER_MAX_PRICE_QUANTITY",
+                    user=user,
+                    backup_value="",
+                ),
+                default=0,
+            )
+            or None,
+            "part_pk": part.pk,
+            "show_score": bool(getattr(settings, "DEBUG", False)),
+            "top_n": self._to_int_from_string(
+                self.get_effective_setting(
+                    "TOP_N_CANDIDATES", user=user, backup_value=10
+                ),
+                default=10,
+            ),
+            "suppliers": suppliers,
+        }
 
     def get_ui_dashboard_items(self, request, context, **kwargs):
         del context, kwargs
@@ -2542,7 +2578,6 @@ class SupplierScout(
     def get_ui_primary_actions(self, request, context, **kwargs):
         actions = []
         context = context or {}
-
         part_pk = None
         if context.get("target_model") == "part" and context.get("target_id"):
             try:
@@ -2576,44 +2611,10 @@ class SupplierScout(
             "key": "supplierscout-part-match-action",
             "title": "Supplier Match",
             "icon": "ti:search",
-            "source": self.plugin_static_file("Panel.js:getFeature?v=20260531n"),
-            "context": {
-                "title": "Supplier Part Matching",
-                "search_url": f"/{self.base_url}searchcandidates",
-                "apply_url": f"/{self.base_url}applycandidates",
-                "run_resync_url": f"/{self.base_url}runresync",
-                "rate_status_url": f"/{self.base_url}ratelimitstatus",
-                "token_debug_url": f"/{self.base_url}tokendebug",
-                "default_query": self._build_initial_search_query(
-                    part, user=request.user
-                ),
-                "default_min_qty": self._to_int_from_string(
-                    self.get_effective_setting(
-                        "MOUSER_MIN_PRICE_QUANTITY",
-                        user=request.user,
-                        backup_value=1,
-                    ),
-                    default=1,
-                ),
-                "default_max_qty": self._to_int_from_string(
-                    self.get_effective_setting(
-                        "MOUSER_MAX_PRICE_QUANTITY",
-                        user=request.user,
-                        backup_value="",
-                    ),
-                    default=0,
-                )
-                or None,
-                "part_pk": part.pk,
-                "show_score": bool(getattr(settings, "DEBUG", False)),
-                "top_n": self._to_int_from_string(
-                    self.get_effective_setting(
-                        "TOP_N_CANDIDATES", user=request.user, backup_value=10
-                    ),
-                    default=10,
-                ),
-                "suppliers": suppliers,
-            },
+            "source": self.plugin_static_file(
+                f"Panel.js:getFeature?v={PANEL_JS_CACHE_BUST}"
+            ),
+            "context": self._build_part_match_context(part, request.user, suppliers),
             "options": {
                 "color": "blue" if action_enabled else "gray",
                 "disabled": not action_enabled,

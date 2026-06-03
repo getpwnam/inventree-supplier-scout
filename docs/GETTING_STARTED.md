@@ -6,32 +6,40 @@ This quickstart walks through the day-to-day Supplier Scout workflow in the Inve
 
 Open any purchaseable part record, then use the **Supplier Match** action in the part actions bar.
 
-![Supplier Match panel screenshot](images/supplier-match-panel.svg)
+![Supplier Match action screenshot](images/supplier-match-action.png)
 
-## 2) Search and review matches
+## 2) Optionally refine search criteria
 
-In the Supplier Match panel:
+In the Supplier Match panel, refine the search before running it:
 
 1. Confirm or edit the generated search query.
 2. Choose a supplier (or all configured suppliers).
-3. Click **Find Matches**.
-4. Review ranked candidates (part number, stock, and pricing).
 
-## 3) Import selected candidates
+![Supplier Match panel screenshot](images/supplier-match-panel.png)
+
+## 3) Search and review matches
+
+Click **Find Matches** to review ranked candidates with part number, stock, and pricing.
+
+![Candidate review table screenshot](images/candidate-review-table.png)
+
+## 4) Import selected candidates
 
 Select one or more rows and click **Add Selected** to create or update supplier parts and import price breaks.
 
-## 4) Monitor API usage from the dashboard
+![Supplier pricing screenshot](images/supplier-pricing.png)
+
+## 5) Monitor API usage from the dashboard
 
 Open the InvenTree dashboard to see **Supplier Scout Metrics** for query volume, API budget usage, and cache diagnostics.
 
-![Dashboard metrics screenshot](images/dashboard-metrics.svg)
+![Dashboard widget screenshot](images/dashboard-query-metrics.png)
 
-## 5) Verify plugin settings
+## 6) Verify plugin settings
 
 If UI actions are missing, check plugin settings and supplier credentials first.
 
-![Plugin settings screenshot](images/plugin-settings.svg)
+![Plugin settings screenshot](images/plugin-settings.png)
 
 ## Troubleshooting checklist
 

@@ -1,8 +1,5 @@
 // Import for type checking
-import {
-  checkPluginVersion,
-  type InvenTreePluginContext
-} from '@inventreedb/ui';
+import type { InvenTreePluginContext } from '@inventreedb/ui';
 import {
   Alert,
   Badge,
@@ -199,6 +196,5 @@ function SupplierScoutDashboardItem({
 export function renderSupplierScoutDashboardItem(
   context: InvenTreePluginContext
 ) {
-  checkPluginVersion(context);
   return <SupplierScoutDashboardItem context={context} />;
 }

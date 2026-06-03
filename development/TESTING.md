@@ -234,6 +234,17 @@ npm run build
 npm run lint
 ```
 
+Run the frontend checks locally:
+
+```bash
+cd frontend
+
+npm ci
+npm run translate
+npm run build
+npm run lint
+```
+
 ## See CI and Coverage on GitHub
 
 1. Push a branch and open a pull request.

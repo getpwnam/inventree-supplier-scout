@@ -353,6 +353,26 @@ class TestSupplierScoutCoreHelpers(unittest.TestCase):
         self.settings["TOKEN_NAME_MODE"] = "unexpected"
         self.assertEqual(self.scout._get_name_token_mode(), "fallback")
 
+    def test_build_part_match_context_includes_expected_urls_and_defaults(self):
+        self.scout.base_url = "supplierscout/"
+        part = types.SimpleNamespace(pk=17)
+        user = types.SimpleNamespace(username="demo-user", pk=1)
+        suppliers = [{"key": "mouser", "pk": 7, "name": "Mouser"}]
+
+        with patch.object(
+            self.scout,
+            "_build_initial_search_query",
+            return_value="ATMEGA328",
+        ):
+            context = self.scout._build_part_match_context(part, user, suppliers)
+
+        self.assertEqual(context["title"], "Supplier Part Matching")
+        self.assertEqual(context["search_url"], "/supplierscout/searchcandidates")
+        self.assertEqual(context["apply_url"], "/supplierscout/applycandidates")
+        self.assertEqual(context["default_query"], "ATMEGA328")
+        self.assertEqual(context["part_pk"], 17)
+        self.assertEqual(context["suppliers"], suppliers)
+
     def test_query_plan_fallback_skips_name_with_structured_tokens(self):
         self.settings["TOKEN_NAME_MODE"] = "fallback"
         token_data = {

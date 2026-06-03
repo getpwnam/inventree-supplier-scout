@@ -63,10 +63,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
-      - name: Build Frontend
+      - name: Install Frontend Dependencies
         run: |
           cd frontend
           npm ci
+      - name: Build Frontend
+        run: |
+          cd frontend
           npm run translate
           npm run build
           npm run lint

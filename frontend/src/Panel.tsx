@@ -19,7 +19,6 @@ import {
   TagsInput,
   Text,
   TextInput,
-  Title,
   Tooltip,
   UnstyledButton
 } from '@mantine/core';
@@ -1715,29 +1714,6 @@ function SupplierScoutMatcher({
         )}
       </Group>
     </Stack>
-  );
-}
-
-function SupplierScoutPanel({ context }: { context: InvenTreePluginContext }) {
-  const serverContext = useMemo(() => {
-    return (
-      ((context.context || context.instance || {}) as MatcherContext) || {}
-    );
-  }, [context.context, context.instance]);
-
-  return (
-    <Stack gap='sm'>
-      <Title order={4}>Supplier Part Matching</Title>
-      <SupplierScoutMatcher context={context} serverContext={serverContext} />
-    </Stack>
-  );
-}
-
-export function renderSupplierScoutPanel(context: InvenTreePluginContext) {
-  return (
-    <LocalizedComponent locale={context.locale}>
-      <SupplierScoutPanel context={context} />
-    </LocalizedComponent>
   );
 }
 

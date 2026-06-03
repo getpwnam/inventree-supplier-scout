@@ -43,6 +43,7 @@ from .mouser import MouserSupplierAdapter
 logger = logging.getLogger(__name__)
 
 SUPPLIER_SCOUT_PLUGIN_SLUG = "supplierscout"
+PANEL_JS_CACHE_BUST = "20260603a"
 
 
 def run_supplier_resync_task(supplier_pk, part_pk=None):
@@ -2512,27 +2513,6 @@ class SupplierScout(
         except Exception as e:
             return self._handle_endpoint_exception("Token debug failed", e)
 
-    def _extract_part_pk_from_ui_context(self, context):
-        context = context or {}
-
-        part_pk = None
-        if context.get("target_model") == "part" and context.get("target_id"):
-            try:
-                part_pk = int(context.get("target_id"))
-            except Exception:
-                part_pk = None
-
-        if part_pk is None:
-            location = str(context.get("location") or "").strip()
-            match = re.search(r"/part/(\d+)(?:/|$)", location)
-            if match:
-                try:
-                    part_pk = int(match.group(1))
-                except Exception:
-                    part_pk = None
-
-        return part_pk
-
     def _build_part_match_context(self, part, user, suppliers):
         return {
             "title": "Supplier Part Matching",
@@ -2570,46 +2550,6 @@ class SupplierScout(
             "suppliers": suppliers,
         }
 
-    def get_ui_panels(self, request, context, **kwargs):
-        context = context or {}
-        part_pk = self._extract_part_pk_from_ui_context(context)
-
-        if part_pk is None:
-            return []
-
-        part = Part.objects.filter(pk=part_pk).first()
-        if part is None or not part.purchaseable:
-            return []
-
-        if not self._user_has_part_write_permission(getattr(request, "user", None)):
-            return []
-
-        # If a primary action can be rendered for this context, prefer that
-        # entry point and suppress the fallback panel to avoid duplicate UI.
-        if self.get_ui_primary_actions(request, context, **kwargs):
-            return []
-
-        suppliers = self._get_search_ready_suppliers(user=request.user)
-        if not suppliers:
-            return []
-
-        return [
-            {
-                "key": "supplierscout-part-match-panel",
-                "title": "Supplier Match",
-                "description": _(
-                    "Search and apply supplier matches for this purchaseable part"
-                ),
-                "icon": "ti:search",
-                "source": self.plugin_static_file(
-                    "Panel.js:renderSupplierScoutPanel?v=20260602a"
-                ),
-                "context": self._build_part_match_context(
-                    part, request.user, suppliers
-                ),
-            }
-        ]
-
     def get_ui_dashboard_items(self, request, context, **kwargs):
         del context, kwargs
 
@@ -2637,7 +2577,22 @@ class SupplierScout(
 
     def get_ui_primary_actions(self, request, context, **kwargs):
         actions = []
-        part_pk = self._extract_part_pk_from_ui_context(context)
+        context = context or {}
+        part_pk = None
+        if context.get("target_model") == "part" and context.get("target_id"):
+            try:
+                part_pk = int(context.get("target_id"))
+            except Exception:
+                part_pk = None
+
+        if part_pk is None:
+            location = str(context.get("location") or "").strip()
+            match = re.search(r"/part/(\d+)(?:/|$)", location)
+            if match:
+                try:
+                    part_pk = int(match.group(1))
+                except Exception:
+                    part_pk = None
 
         if part_pk is None:
             return actions
@@ -2656,7 +2611,9 @@ class SupplierScout(
             "key": "supplierscout-part-match-action",
             "title": "Supplier Match",
             "icon": "ti:search",
-            "source": self.plugin_static_file("Panel.js:getFeature?v=20260531n"),
+            "source": self.plugin_static_file(
+                f"Panel.js:getFeature?v={PANEL_JS_CACHE_BUST}"
+            ),
             "context": self._build_part_match_context(part, request.user, suppliers),
             "options": {
                 "color": "blue" if action_enabled else "gray",

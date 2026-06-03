@@ -27,19 +27,16 @@ Additional suppliers can be added by implementing a `BaseSupplierAdapter` subcla
 - Minimum required InvenTree version: **1.4.0.dev0**
 
 - InvenTree versions that support the `primary_action` plugin UI feature show a
-   **Supplier Match** button in the part header actions.
-- Older InvenTree versions (where `primary_action` is not supported) use a
-   fallback **Supplier Match** plugin panel on the part detail page.
+  **Supplier Match** button in the part header actions.
 
-This keeps SupplierScout usable on stable releases while preserving the newer
-header-action experience where available.
+SupplierScout now relies on the primary action entry point for part matching.
 
 ### Compatibility Matrix
 
 | InvenTree track | Plugin UI mode | SupplierScout status |
 |---|---|---|
-| `>= 1.4.0` stable release | Primary action + fallback compatibility path | Supported |
-| Bleeding edge / development (`1.4.0.dev0` and newer) | Primary action + fallback compatibility path | Supported |
+| `>= 1.4.0` stable release | Primary action | Supported |
+| Bleeding edge / development (`1.4.0.dev0` and newer) | Primary action | Supported |
 
 ### Release Compatibility Policy
 
